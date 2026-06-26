@@ -4,7 +4,14 @@ from torch.utils.checkpoint import checkpoint
 
 from transformers import T5Tokenizer, T5EncoderModel, CLIPTokenizer, CLIPTextModel
 
-import open_clip
+import timm
+from timm.data import resolve_data_config
+from timm.data.transforms_factory import create_transform
+from PIL import Image
+
+import torchvision.transforms.functional as F
+
+# import open_clip
 from ldm.util import default, count_params
 
 
@@ -211,3 +218,69 @@ class FrozenCLIPT5Encoder(AbstractEncoder):
         return [clip_z, t5_z]
 
 
+class FrozenDFN2BImageEmbedder(AbstractEncoder):
+    """
+    Input:
+        -  torch.Tensor BCHW float32 in [0,1]
+        -  PIL.Image
+    Output:
+        tokens (B, N, C)
+    """
+
+    def __init__(
+        self,
+        version="hf_hub:timm/vit_large_patch14_clip_quickgelu_224.dfn2b",
+        device="cuda",
+        freeze=True,
+    ):
+        super().__init__()
+        self.device = device
+        self.model = timm.create_model(version, pretrained=True).to(self.device)
+
+        config = resolve_data_config({}, model=self.model)
+        self.transform = create_transform(**config)
+
+        if freeze:
+            self.freeze()
+
+    def freeze(self):
+        self.model.eval()
+        for p in self.model.parameters():
+            p.requires_grad = False
+
+    def preprocess_tensor(self, x: torch.Tensor):
+        """x: BCHW float32 in [0,1]"""
+        assert isinstance(x, torch.Tensor)
+        assert x.ndim == 4, f"Expected BCHW, got {x.shape}"
+        x = x.float()
+        x = F.resize(x, [224, 224], interpolation=F.InterpolationMode.BICUBIC, antialias=True)
+        x = F.normalize(
+            x,
+            mean=[0.48145466, 0.4578275, 0.40821073],
+            std=[0.26862954, 0.26130258, 0.27577711],
+        )
+        return x
+
+    def preprocess_pil(self, img: Image.Image):
+        """img: PIL.Image"""
+        return self.transform(img.convert("RGB"))
+
+    def forward(self, x):
+        # nếu là PIL.Image hoặc list PIL.Image
+        if isinstance(x, Image.Image):
+            x = self.preprocess_pil(x).unsqueeze(0)
+        elif isinstance(x, list) and all(isinstance(i, Image.Image) for i in x):
+            x = torch.stack([self.preprocess_pil(i) for i in x])
+        elif isinstance(x, torch.Tensor):
+            x = self.preprocess_tensor(x)
+        else:
+            raise TypeError(f"Unsupported input type: {type(x)}")
+
+        x = x.to(self.device, non_blocking=True)
+        with torch.no_grad():
+            tokens = self.model.forward_features(x)
+        return tokens
+
+    def encode(self, x):
+        return self(x)
+    

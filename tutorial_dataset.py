@@ -5,6 +5,38 @@ import numpy as np
 from torch.utils.data import Dataset
 
 
+def resize_and_pad_to_square(img, target_size=(512, 512)):
+    h, w, c = img.shape
+    target_w, target_h = target_size
+
+    # Bước 1: resize theo cạnh lớn
+    if h > w:
+        new_h = target_h
+        new_w = int(w * target_h / h)
+    else:
+        new_w = target_w
+        new_h = int(h * target_w / w)
+
+    img_resized = cv2.resize(img, (new_w, new_h), interpolation=cv2.INTER_AREA)
+
+    # Bước 2: pad để thành vuông
+    pad_top = (target_h - new_h) // 2
+    pad_bottom = target_h - new_h - pad_top
+    pad_left = (target_w - new_w) // 2
+    pad_right = target_w - new_w - pad_left
+
+    img_padded = cv2.copyMakeBorder(
+        img_resized,
+        pad_top, pad_bottom, pad_left, pad_right,
+        borderType=cv2.BORDER_CONSTANT,
+        value=(0, 0, 0)  # màu đen
+    )
+
+    pad_info = (pad_top, pad_bottom, pad_left, pad_right)
+
+    return img_padded, pad_info
+
+
 class MyDataset(Dataset):
     def __init__(self, target_size=(512,512), isTest=False):
         self.data = []
@@ -34,8 +66,8 @@ class MyDataset(Dataset):
             "std": self.std_xyz
         }
         np.save(f"{self.root_path}/pose_stats.npy", stats_xyz)  # Useful for inference
-        print("Mean x,y,z:", self.mean_xyz)
-        print("Std x,y,z:", self.std_xyz)
+        # print("Mean x,y,z:", self.mean_xyz)
+        # print("Std x,y,z:", self.std_xyz)
     
 
     def __len__(self):
@@ -78,10 +110,10 @@ class MyDataset(Dataset):
         ref2   = cv2.cvtColor(ref2,   cv2.COLOR_BGR2RGB)
 
         # Resize
-        source = cv2.resize(source, self.target_size, interpolation=cv2.INTER_AREA)
-        target = cv2.resize(target, self.target_size, interpolation=cv2.INTER_AREA)
-        ref1   = cv2.resize(ref1,   self.target_size, interpolation=cv2.INTER_AREA)
-        ref2   = cv2.resize(ref2,   self.target_size, interpolation=cv2.INTER_AREA)
+        source, source_pad_info = resize_and_pad_to_square(source, self.target_size)
+        target, target_pad_info = resize_and_pad_to_square(target, self.target_size)
+        ref1, ref1_pad_info     = resize_and_pad_to_square(ref1,   self.target_size)
+        ref2, ref2_pad_info     = resize_and_pad_to_square(ref2,   self.target_size)
 
         # Normalize source and ref images to [0, 1].
         source = source.astype(np.float32) / 255.0
@@ -93,5 +125,6 @@ class MyDataset(Dataset):
 
         return dict(jpg=target, txt=prompt, hint=source, 
                     ref1=ref1, ref1_pose=ref1_pose, 
-                    ref2=ref2, ref2_pose=ref2_pose)
+                    ref2=ref2, ref2_pose=ref2_pose,
+                    pad_info=source_pad_info)  # các ảnh đều như nhau về shape nên pad giống nhau?
 

@@ -9,6 +9,10 @@ model:
     first_stage_key: "jpg"
     cond_stage_key: "txt"
     control_key: "hint"
+    ref1_key: "ref1"
+    ref2_key: "ref2"
+    ref1_pose_key: "ref1_pose"
+    ref2_pose_key: "ref2_pose"
     image_size: 64
     channels: 4
     cond_stage_trainable: false
@@ -77,3 +81,6 @@ model:
 
     cond_stage_config:
       target: ldm.modules.encoders.modules.FrozenCLIPEmbedder
+
+    image_ref_stage_config:
+      target: ldm.modules.encoders.modules.FrozenDFN2BImageEmbedder
