@@ -340,7 +340,7 @@ class ControlLDM(LatentDiffusion):
         self.ref2_key = ref2_key
         self.ref1_pose_key = ref1_pose_key
         self.ref2_pose_key = ref2_pose_key
-        self.instantiate_cond_stage(ref_cond_stage_config)
+        self.instantiate_ref_cond_stage(ref_cond_stage_config)
 
     def instantiate_ref_cond_stage(self, config):
         model = instantiate_from_config(config)
@@ -408,20 +408,21 @@ class ControlLDM(LatentDiffusion):
         use_ddim = ddim_steps is not None
 
         log = dict()
-        z, c = self.get_input(batch, self.first_stage_key, bs=N)
+        z, c_orig = self.get_input(batch, self.first_stage_key, bs=N)
 
-        c_cat, c = c["c_concat"][0][:N], c["c_crossattn"][0][:N]  ## This c var is text emb
+        c_cat, c = c_orig["c_concat"][0][:N], c_orig["c_crossattn"][0][:N]  ## This c var is text emb
 
-        c_ref1_token, c_ref2_token = c["c_ref_token"][0][:N], c["c_ref_token"][1][:N]
-        c_ref1_pose, c_ref2_pose = c["c_ref_pose"][0][:N], c["c_ref_pose"][1][:N]
+        c_ref1_token, c_ref2_token = c_orig["c_ref_token"][0][:N], c_orig["c_ref_token"][1][:N]
+        c_ref1_pose, c_ref2_pose = c_orig["c_ref_pose"][0][:N], c_orig["c_ref_pose"][1][:N]
         
         N = min(z.shape[0], N)
         n_row = min(z.shape[0], n_row)
         log["reconstruction"] = self.decode_first_stage(z)
         log["control"] = c_cat * 2.0 - 1.0
         # log["conditioning"] = log_txt_as_img((512, 512), batch[self.cond_stage_key], size=16)
-        log["ref1"] = batch[self.ref1_key] * 2.0 - 1.0
-        log["ref2"] = batch[self.ref2_key] * 2.0 - 1.0
+        ref1_batch, ref2_batch = batch[self.ref1_key][:N].permute(0, 3, 1, 2), batch[self.ref2_key][:N].permute(0, 3, 1, 2)  ## logger require CHW
+        log["ref1"] = ref1_batch * 2.0 - 1.0
+        log["ref2"] = ref2_batch * 2.0 - 1.0
 
         if plot_diffusion_rows:
             # get diffusion row
