@@ -1,5 +1,6 @@
 0. clone repo:
 - git clone https://github.com/Bochidaru/3dgs_controlnet.git
+- cd 3dgs_controlnet
 
 1. install env:
 - conda env update --file environment.yaml --prune (for lightning ai)
