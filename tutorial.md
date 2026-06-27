@@ -7,13 +7,13 @@
 
 2. get the dataset:
 - option 1:  gdown 1SUl2oOsD_rvNr2wu1KY16aGRibYCGBmZ
-- option 2:  hf download minhphuong04/3dgs_cldm_dataset_and_weight --repo-type=dataset --local-dir . cldm_dataset.zip  (fastest)
+- option 2:  hf download minhphuong04/3dgs_cldm_dataset_and_weight cldm_dataset.zip --repo-type=dataset --local-dir .         (fastest)
 - unzip
 
 3. get the sd1.5 weight from hf:
 - option 1: gdown 1fcikb_mcSGsIhh4XrntiLTFaEPmcdmta
-- option 2: hf download stable-diffusion-v1-5/stable-diffusion-v1-5 --repo-type=model --local-dir . v1-5-pruned.ckpt
-- option 3: hf download minhphuong04/3dgs_cldm_dataset_and_weight --repo-type=dataset --local-dir . v1-5-pruned.ckpt  
+- option 2: hf download stable-diffusion-v1-5/stable-diffusion-v1-5 v1-5-pruned.ckpt --repo-type=model --local-dir .
+- option 3: hf download minhphuong04/3dgs_cldm_dataset_and_weight v1-5-pruned.ckpt  --repo-type=dataset --local-dir .
 
 4. run this for loading weight from sd1.5:
 - python tool_add_control.py v1-5-pruned.ckpt ./models/control_sd15_ini.ckpt 
