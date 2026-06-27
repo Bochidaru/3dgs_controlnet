@@ -13,11 +13,11 @@ warnings.filterwarnings("ignore", category=FutureWarning)
 # Configs
 resume_path = './models/control_sd15_ini.ckpt'
 batch_size = 8
-logger_freq = 250
 learning_rate = 1e-5
 sd_locked = True
 only_mid_control = False
-accumulate_grad_batches = 8
+accumulate_grad_batches = 8                   ## 1 global step = 8 batch
+logger_freq = accumulate_grad_batches * 250   ## logger_freq là batch step, không phải global step
 
 
 checkpoint_callback = ModelCheckpoint(
@@ -25,7 +25,7 @@ checkpoint_callback = ModelCheckpoint(
     filename="weights-{epoch:02d}-{step}",
     save_top_k=-1,
     every_n_train_steps=1000,
-    save_weights_only=True
+    save_weights_only=False
 )
 
 
