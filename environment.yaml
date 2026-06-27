@@ -33,3 +33,4 @@ dependencies:
       - hf_xet
       - gdown
       - xformers
+      - huggingface-hub[cli]

@@ -6,12 +6,14 @@
 - conda env update --file environment.yaml --prune         (for lightning ai)
 
 2. get the dataset:
-- gdown 1SUl2oOsD_rvNr2wu1KY16aGRibYCGBmZ
+- option 1:  gdown 1SUl2oOsD_rvNr2wu1KY16aGRibYCGBmZ
+- option 2:  hf download minhphuong04/3dgs_cldm_dataset_and_weight --repo-type=dataset --local-dir . cldm_dataset.zip  (fastest)
 - unzip
 
 3. get the sd1.5 weight from hf:
-- curl -L -o v1-5-pruned.ckpt https://huggingface.co/stable-diffusion-v1-5/stable-diffusion-v1-5/resolve/main/v1-5-pruned.ckpt
-- gdown 1fcikb_mcSGsIhh4XrntiLTFaEPmcdmta              (faster)
+- option 1: gdown 1fcikb_mcSGsIhh4XrntiLTFaEPmcdmta
+- option 2: hf download stable-diffusion-v1-5/stable-diffusion-v1-5 --repo-type=model --local-dir . v1-5-pruned.ckpt
+- option 3: hf download minhphuong04/3dgs_cldm_dataset_and_weight --repo-type=dataset --local-dir . v1-5-pruned.ckpt  
 
 4. run this for loading weight from sd1.5:
 - python tool_add_control.py v1-5-pruned.ckpt ./models/control_sd15_ini.ckpt 
