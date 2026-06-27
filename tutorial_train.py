@@ -8,7 +8,7 @@ from cldm.model import create_model, load_state_dict
 from pytorch_lightning.callbacks import ModelCheckpoint
 import warnings
 warnings.filterwarnings("ignore", category=UserWarning)
-
+warnings.filterwarnings("ignore", category=FutureWarning)
 
 # Configs
 resume_path = './models/control_sd15_ini.ckpt'

@@ -7,11 +7,11 @@ dependencies:
   - pip
   - pytorch=2.4.1
   - torchvision=0.19.1
-  - numpy=1.26.4
   - pip:
       - albumentations==1.3.0
       - opencv-contrib-python==4.8.1.78
       - opencv-python==4.8.1.78
+      - opencv-python-headless==4.8.1.78
       - imageio==2.9.0
       - imageio-ffmpeg==0.4.2
       - pytorch-lightning>=2.0
@@ -34,3 +34,4 @@ dependencies:
       - gdown
       - xformers==0.0.27.post2
       - huggingface-hub[cli]
+      - numpy==1.26.4

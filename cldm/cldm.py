@@ -3,6 +3,8 @@ import torch
 import torch as th
 import torch.nn as nn
 
+torch.set_float32_matmul_precision('high')
+
 from ldm.modules.diffusionmodules.util import (
     conv_nd,
     linear,
