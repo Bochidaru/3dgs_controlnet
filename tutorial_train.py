@@ -46,8 +46,8 @@ log_images_kwargs = {
     "unconditional_guidance_scale": 1.0   
 }
 logger = ImageLogger(batch_frequency=logger_freq, log_images_kwargs=log_images_kwargs)
-trainer = pl.Trainer(gpus=1, 
-                     precision="bf16", 
+trainer = pl.Trainer(accelerator="gpu", 
+                     precision="bf16-mixed", 
                      callbacks=[logger, checkpoint_callback], 
                      accumulate_grad_batches=accumulate_grad_batches, 
                      max_steps=8000)  ## 1 step = 8 batch (batchsize x accu) -> 8000 steps = 64000 batch -> with 8k dataset = 64 epochs (1000 batch = 1 epoch)
