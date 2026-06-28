@@ -64,7 +64,7 @@ trainer = pl.Trainer(accelerator="gpu",
 
 # Train!
 if resume_ckpt_path and os.path.exists(resume_ckpt_path):
-    print("!!! CONTINUE FROM CHECKPOINT !!!")
+    print(f"!!! CONTINUE FROM CHECKPOINT {resume_ckpt_path}!!!")
     trainer.fit(model, train_dataloaders=dataloader, ckpt_path=resume_ckpt_path)
 else:
     print("!!! INIT TRAIN !!!")
