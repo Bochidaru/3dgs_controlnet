@@ -24,6 +24,9 @@ class ImageLogger(Callback):
         self.log_images_kwargs = log_images_kwargs if log_images_kwargs else {}
         self.log_first_step = log_first_step
 
+        # For global step
+        self.last_log_step = -1
+
     @rank_zero_only
     def log_local(self, save_dir, split, images, global_step, current_epoch, batch_idx):
         root = os.path.join(save_dir, "image_log", split, f"step_{global_step:06}")
@@ -40,11 +43,18 @@ class ImageLogger(Callback):
             Image.fromarray(grid).save(path)
 
     def log_img(self, pl_module, batch, batch_idx, split="train"):
-        check_idx = batch_idx  # if self.log_on_batch_idx else pl_module.global_step
+        check_idx = pl_module.global_step
+
+        if check_idx == self.last_log_step:
+            return
+
         if (self.check_frequency(check_idx) and  # batch_idx % self.batch_freq == 0
                 hasattr(pl_module, "log_images") and
                 callable(pl_module.log_images) and
                 self.max_images > 0):
+
+            self.last_log_step = check_idx
+            
             logger = type(pl_module.logger)
 
             is_train = pl_module.training

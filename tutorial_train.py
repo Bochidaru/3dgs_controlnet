@@ -16,8 +16,8 @@ batch_size = 8
 learning_rate = 1e-5
 sd_locked = True
 only_mid_control = False
-accumulate_grad_batches = 8                   ## 1 global step = 8 batch
-logger_freq = accumulate_grad_batches * 250   ## logger_freq là batch step, không phải global step
+accumulate_grad_batches = 8                   ## 1 global step = n batch
+logger_freq = 250
 
 
 checkpoint_callback = ModelCheckpoint(
@@ -39,7 +39,9 @@ model.only_mid_control = only_mid_control
 
 # Misc
 dataset = MyDataset()
-dataloader = DataLoader(dataset, num_workers=0, batch_size=batch_size, shuffle=True)
+dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True, 
+                        num_workers=6, pin_memory=True, 
+                        persistent_workers=True, prefetch_factor=2)  # chỉ bật prefetch trên máy nhiều ram
 
 log_images_kwargs = {
     "sample": True,             ### Tắt CFG, vì text luôn empty
@@ -50,7 +52,7 @@ trainer = pl.Trainer(accelerator="gpu",
                      precision="bf16-mixed", 
                      callbacks=[logger, checkpoint_callback], 
                      accumulate_grad_batches=accumulate_grad_batches, 
-                     max_steps=8000)  ## 1 step = 8 batch (batchsize x accu) -> 8000 steps = 64000 batch -> with 8k dataset = 64 epochs (1000 batch = 1 epoch)
+                     max_steps=15000)  ## 1 step = 8 batch (batchsize x accu) -> 8000 steps = 64000 batch -> with 8k dataset = 64 epochs (1000 batch = 1 epoch)
 
 
 # Train!
