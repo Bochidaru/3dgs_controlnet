@@ -12,7 +12,7 @@ warnings.filterwarnings("ignore", category=UserWarning)
 warnings.filterwarnings("ignore", category=FutureWarning)
 
 # Configs
-resume_ckpt_path = ""
+resume_ckpt_path = ""                             ## For example: "./models/weights-epoch=30-step=2000.ckpt"
 pretrain_path = './models/control_sd15_ini.ckpt'
 pl.seed_everything(42, workers=True)
 learning_rate = 1e-5
@@ -24,7 +24,7 @@ accumulate_grad_batches = 8
 # DataLoader Config
 batch_size = 8
 num_workers = 8
-prefetch_factor = 4 if num_workers > 0 else 0
+prefetch_factor = 4 if num_workers > 0 else None
 pin_memory = num_workers > 0
 persistent_workers = num_workers > 0
 
