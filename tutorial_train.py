@@ -25,8 +25,8 @@ accumulate_grad_batches = 4             ## With 80gb vram, use bs=26, accu=4
 # DataLoader Config
 batch_size = 26
 
-num_workers = 8
-prefetch_factor = 4 if num_workers > 0 else None
+num_workers = 6
+prefetch_factor = 2 if num_workers > 0 else None
 pin_memory = num_workers > 0
 persistent_workers = num_workers > 0
 
