@@ -19,10 +19,12 @@ learning_rate = 1e-5
 sd_locked = True
 only_mid_control = False
 image_logger_freq = 250
-accumulate_grad_batches = 8
+
+accumulate_grad_batches = 4             ## With 80gb vram, use bs=26, accu=4
 
 # DataLoader Config
-batch_size = 8
+batch_size = 26
+
 num_workers = 8
 prefetch_factor = 4 if num_workers > 0 else None
 pin_memory = num_workers > 0
