@@ -26,7 +26,7 @@
 For continue training from checkpoint: 
 - Skip step 3 and 4, download newest weight from hf:
 - hf download minhphuong04/3dgs_cldm_dataset_and_weight LATEST_WEIGHT_HERE --repo-type=dataset --local-dir ./models/
-- in tutorial_train, change weight path for new ckpt file `resume_path = './models/control_sd15_ini.ckpt'`
+- in tutorial_train, change weight path for new ckpt file `resume_ckpt_path = ""`
 - python tutorial_train.py
 
 

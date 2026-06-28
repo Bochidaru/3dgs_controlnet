@@ -5,13 +5,16 @@ from torch.utils.data import DataLoader
 from tutorial_dataset import MyDataset
 from cldm.logger import ImageLogger
 from cldm.model import create_model, load_state_dict
+import os
 from pytorch_lightning.callbacks import ModelCheckpoint
 import warnings
 warnings.filterwarnings("ignore", category=UserWarning)
 warnings.filterwarnings("ignore", category=FutureWarning)
 
 # Configs
-resume_path = './models/control_sd15_ini.ckpt'
+resume_ckpt_path = ""
+pretrain_path = './models/control_sd15_ini.ckpt'
+pl.seed_everything(42, workers=True)
 learning_rate = 1e-5
 sd_locked = True
 only_mid_control = False
@@ -37,7 +40,6 @@ checkpoint_callback = ModelCheckpoint(
 
 # First use cpu to load models. Pytorch Lightning will automatically move it to GPUs.
 model = create_model('./models/3dgs_cldm_v15.yaml').cpu()
-model.load_state_dict(load_state_dict(resume_path, location='cpu'))
 model.learning_rate = learning_rate
 model.sd_locked = sd_locked
 model.only_mid_control = only_mid_control
@@ -61,4 +63,10 @@ trainer = pl.Trainer(accelerator="gpu",
 
 
 # Train!
-trainer.fit(model, dataloader)
+if resume_ckpt_path and os.path.exists(resume_ckpt_path):
+    print("!!! CONTINUE FROM CHECKPOINT !!!")
+    trainer.fit(model, train_dataloaders=dataloader, ckpt_path=resume_ckpt_path)
+else:
+    print("!!! INIT TRAIN !!!")
+    model.load_state_dict(load_state_dict(pretrain_path))
+    trainer.fit(model, train_dataloaders=dataloader)
