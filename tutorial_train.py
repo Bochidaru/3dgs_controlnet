@@ -12,12 +12,18 @@ warnings.filterwarnings("ignore", category=FutureWarning)
 
 # Configs
 resume_path = './models/control_sd15_ini.ckpt'
-batch_size = 8
 learning_rate = 1e-5
 sd_locked = True
 only_mid_control = False
-accumulate_grad_batches = 8                   ## 1 global step = n batch
-logger_freq = 250
+image_logger_freq = 250
+accumulate_grad_batches = 8
+
+# DataLoader Config
+batch_size = 8
+num_workers = 8
+prefetch_factor = 4 if num_workers > 0 else 0
+pin_memory = num_workers > 0
+persistent_workers = num_workers > 0
 
 
 checkpoint_callback = ModelCheckpoint(
@@ -36,23 +42,22 @@ model.learning_rate = learning_rate
 model.sd_locked = sd_locked
 model.only_mid_control = only_mid_control
 
-
 # Misc
 dataset = MyDataset()
 dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True, 
-                        num_workers=6, pin_memory=True, 
-                        persistent_workers=True, prefetch_factor=2)  # chỉ bật prefetch trên máy nhiều ram
+                        num_workers=num_workers, pin_memory=pin_memory, 
+                        persistent_workers=persistent_workers, prefetch_factor=prefetch_factor)
 
 log_images_kwargs = {
     "sample": True,             ### Tắt CFG, vì text luôn empty
     "unconditional_guidance_scale": 1.0   
 }
-logger = ImageLogger(batch_frequency=logger_freq, log_images_kwargs=log_images_kwargs)
+logger = ImageLogger(batch_frequency=image_logger_freq, log_images_kwargs=log_images_kwargs)
 trainer = pl.Trainer(accelerator="gpu", 
                      precision="bf16-mixed", 
                      callbacks=[logger, checkpoint_callback], 
                      accumulate_grad_batches=accumulate_grad_batches, 
-                     max_steps=15000)  ## 1 step = 8 batch (batchsize x accu) -> 8000 steps = 64000 batch -> with 8k dataset = 64 epochs (1000 batch = 1 epoch)
+                     max_steps=15000)
 
 
 # Train!
