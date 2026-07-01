@@ -19,7 +19,7 @@ from ldm.modules.diffusionmodules.openaimodel import UNetModel, TimestepEmbedSeq
 from ldm.models.diffusion.ddpm import LatentDiffusion, disabled_train
 from ldm.util import log_txt_as_img, exists, instantiate_from_config
 from ldm.models.diffusion.ddim import DDIMSampler
-from film_head import FiLMHead
+from cldm.film_head import FiLMHead
 
 
 class ControlledUnetModel(UNetModel):
@@ -175,7 +175,7 @@ class ControlNet(nn.Module):
             )
         
         self.art_ref_trans_block = SpatialTransformer(
-                model_channels, num_heads=8, dim_head=model_channels//8, depth=transformer_depth, context_dim=context_dim,
+                model_channels, 8, model_channels//8, depth=transformer_depth, context_dim=context_dim,
                 disable_self_attn=False, use_linear=use_linear_in_transformer,
                 use_checkpoint=use_checkpoint
             )
@@ -345,7 +345,7 @@ class ControlNet(nn.Module):
         
         context_hf, context = self.embed_pose_into_ref(ref_tokens[0], ref_tokens[1], ref_poses[0], ref_poses[1])
 
-        guided_hint = self.input_hint_block(hint)   ## B,4,64,64 -> B,320,64,64
+        guided_hint = self.input_hint_block(hint, emb)   ## B,4,64,64 -> B,320,64,64
         guided_hint = self.art_ref_trans_block(guided_hint, context_hf)
 
         outs = []
@@ -525,7 +525,7 @@ class ControlLDM(LatentDiffusion):
     def sample_log(self, cond, batch_size, ddim, ddim_steps, **kwargs):
         ddim_sampler = DDIMSampler(self)
         b, c, h, w = cond["c_concat"][0].shape
-        shape = (self.channels, h // 8, w // 8)
+        shape = (self.channels, h, w)         ## nếu không đưa control vào latent: shape = (self.channels, h // 8, w // 8)
         samples, intermediates = ddim_sampler.sample(ddim_steps, batch_size, shape, cond, verbose=False, **kwargs)
         return samples, intermediates
 
@@ -544,8 +544,10 @@ class ControlLDM(LatentDiffusion):
             self.control_model = self.control_model.cuda()
             self.first_stage_model = self.first_stage_model.cpu()
             self.cond_stage_model = self.cond_stage_model.cpu()
+            self.ref_cond_stage_model = self.ref_cond_stage_model.cpu()
         else:
             self.model = self.model.cpu()
             self.control_model = self.control_model.cpu()
             self.first_stage_model = self.first_stage_model.cuda()
             self.cond_stage_model = self.cond_stage_model.cuda()
+            self.ref_cond_stage_model = self.ref_cond_stage_model.cuda()

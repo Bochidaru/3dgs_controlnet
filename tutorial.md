@@ -8,7 +8,7 @@
 2. get the dataset:
 - option 1:  gdown 1SUl2oOsD_rvNr2wu1KY16aGRibYCGBmZ
 - option 2:  hf download minhphuong04/3dgs_cldm_dataset_and_weight cldm_dataset.zip --repo-type=dataset --local-dir .         (fastest)
-- unzip
+- unzip cldm_dataset.zip
 
 3. get the sd1.5 weight from hf:
 - option 1: gdown 1fcikb_mcSGsIhh4XrntiLTFaEPmcdmta
