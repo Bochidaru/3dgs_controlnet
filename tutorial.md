@@ -26,7 +26,7 @@
 
 For continue training from checkpoint: 
 - Skip step 3 and 4, download newest weight from hf:  https://huggingface.co/datasets/minhphuong04/3dgs_cldm_dataset_and_weight/tree/main
-- hf download minhphuong04/3dgs_cldm_dataset_and_weight LATEST_WEIGHT_HERE --repo-type=dataset --local-dir ./models/
+- hf download minhphuong04/3dgs_cldm_dataset_and_weight {LATEST_WEIGHT_HERE} --repo-type=dataset --local-dir ./models/
 - Example: hf download minhphuong04/3dgs_cldm_dataset_and_weight weights-epoch=30-step=2000.ckpt --repo-type=dataset --local-dir ./models/
 - in tutorial_train, fill path for new ckpt file in this line `resume_ckpt_path = ""`
 - python tutorial_train.py
@@ -35,6 +35,7 @@ For continue training from checkpoint:
 For uploading ckpt to hf repo:
 - hf auth login
 - hf upload minhphuong04/3dgs_cldm_dataset_and_weight ./weights/{fill here} --repo-type=dataset 
+- Example: hf upload minhphuong04/3dgs_cldm_dataset_and_weight ./weights/weights-epoch=30-step=2000.ckpt --repo-type=dataset 
 
 
 For generating latent cache:
