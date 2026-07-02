@@ -147,13 +147,13 @@ class MyDataset(Dataset):
                       pad_info=source_pad_info)
         
         if self.use_cached_latent:
-            source_rel = os.path.relpath(source_path, self.root_path)
-            ref1_rel   = os.path.relpath(ref1_path,   self.root_path)
-            ref2_rel   = os.path.relpath(ref2_path,   self.root_path)
+            source_latent_path = get_save_path(source_path.split("/", 1)[1], self.cache_latent_root_path)
+            ref1_latent_path = get_save_path(ref1_path.split("/", 1)[1], self.cache_latent_root_path)
+            ref2_latent_path = get_save_path(ref2_path.split("/", 1)[1], self.cache_latent_root_path)
 
-            result['z_control']   = torch.load(get_save_path(source_rel, self.cache_latent_root_path), map_location='cpu')
-            result['ref1_latent'] = torch.load(get_save_path(ref1_rel,   self.cache_latent_root_path), map_location='cpu')
-            result['ref2_latent'] = torch.load(get_save_path(ref2_rel,   self.cache_latent_root_path), map_location='cpu')
-
+            result['z_control']   = torch.load(source_latent_path, map_location='cpu')
+            result['ref1_latent'] = torch.load(ref1_latent_path, map_location='cpu')
+            result['ref2_latent'] = torch.load(ref2_latent_path, map_location='cpu')
+            
         return result
 
