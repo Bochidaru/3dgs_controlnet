@@ -61,7 +61,7 @@ trainer = pl.Trainer(accelerator="gpu",
                      precision="bf16-mixed", 
                      callbacks=[logger, checkpoint_callback], 
                      accumulate_grad_batches=accumulate_grad_batches, 
-                     max_steps=15000)
+                     max_steps=30000)
 
 
 # Train!

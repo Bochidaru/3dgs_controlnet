@@ -2,6 +2,14 @@ model_cache/
 
 cldm_dataset/
 
+cache_latent/
+
 .vscode/
 
 __pycache__/
+
+lightning_logs
+
+models/*.ckpt
+
+weights/
