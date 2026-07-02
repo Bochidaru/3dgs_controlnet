@@ -67,7 +67,7 @@ def get_save_path(img_path):
 
 
 @torch.no_grad()
-def precompute_latents(config_path, ckpt_path, root_path, target_size=(512, 512), device='cuda'):
+def precompute_latents(config_path, ckpt_path, root_path, new_root_path, target_size=(512, 512), device='cuda'):
     config = OmegaConf.load(config_path)
     model = instantiate_from_config(config.model)
 
@@ -113,19 +113,20 @@ def precompute_latents(config_path, ckpt_path, root_path, target_size=(512, 512)
         os.makedirs(os.path.dirname(save_path), exist_ok=True)
         torch.save(vae_latent.squeeze(0).cpu(), save_path)  # 4, 64, 64
 
-        encoded_cache[cache_key] = save_path
+        if is_source:
+            encoded_cache[cache_key] = save_path
 
     for line in tqdm(lines):
         item = json.loads(line)
-        dataset_tag = item['dataset_tag']
+        dataset_tag = item['scene_tag']
 
         ref1_img_path   = root_path + '/' + item['ref']['ref1']['path']
         ref2_img_path   = root_path + '/' + item['ref']['ref2']['path']
         source_img_path = root_path + '/' + item['source']
 
-        ref1_save_path   = get_save_path(ref1_img_path)
-        ref2_save_path   = get_save_path(ref2_img_path)
-        source_save_path = get_save_path(source_img_path)
+        ref1_save_path   = new_root_path + '/' + get_save_path(ref1_img_path)
+        ref2_save_path   = new_root_path + '/' + get_save_path(ref2_img_path)
+        source_save_path = new_root_path + '/' + get_save_path(source_img_path)
 
         encode_and_save(ref1_img_path,   ref1_save_path,   dataset_tag)
         encode_and_save(ref2_img_path,   ref2_save_path,   dataset_tag)
@@ -134,9 +135,10 @@ def precompute_latents(config_path, ckpt_path, root_path, target_size=(512, 512)
 
 if __name__ == '__main__':
     precompute_latents(
-        config_path='cldm_v15_latent_cache.yaml',
-        ckpt_path='control_sd15_ini.ckpt.ckpt',
+        config_path='models/3dgs_cldm_v15.yaml',
+        ckpt_path='models/control_sd15_ini.ckpt',
         root_path='./cldm_dataset',
+        new_root_path='./cache_latent',
         target_size=(512, 512),
         device='cuda',
     )
