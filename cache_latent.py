@@ -124,9 +124,13 @@ def precompute_latents(config_path, ckpt_path, root_path, new_root_path, target_
         ref2_img_path   = root_path + '/' + item['ref']['ref2']['path']
         source_img_path = root_path + '/' + item['source']
 
-        ref1_save_path   = new_root_path + '/' + get_save_path(ref1_img_path)
-        ref2_save_path   = new_root_path + '/' + get_save_path(ref2_img_path)
-        source_save_path = new_root_path + '/' + get_save_path(source_img_path)
+        ref1_rel   = os.path.relpath(get_save_path(ref1_img_path),   root_path)
+        ref2_rel   = os.path.relpath(get_save_path(ref2_img_path),   root_path)
+        source_rel = os.path.relpath(get_save_path(source_img_path), root_path)
+
+        ref1_save_path   = os.path.join(new_root_path, ref1_rel)
+        ref2_save_path   = os.path.join(new_root_path, ref2_rel)
+        source_save_path = os.path.join(new_root_path, source_rel)
 
         encode_and_save(ref1_img_path,   ref1_save_path,   dataset_tag)
         encode_and_save(ref2_img_path,   ref2_save_path,   dataset_tag)
