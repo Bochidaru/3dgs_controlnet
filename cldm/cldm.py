@@ -189,12 +189,11 @@ class ControlNet(nn.Module):
             nn.Linear(512, pose_emb_dim),   ## default: pose_emb_dim=64
             nn.SiLU(),
         )
-
+        self.ref_latent_proj = nn.Linear(4, context_dim)
         self.hf_head = FiLMHead(pose_dim=pose_emb_dim, token_dim=context_dim)
         self.sem_head = FiLMHead(pose_dim=pose_emb_dim, token_dim=context_dim)
-
         self.ref_proj = nn.Linear(1024, context_dim)  # DFN2B clip vit l14 cho hidden state dạng B, 257, 1024
-
+        self.ref_latent_downsample = nn.AvgPool2d(kernel_size=2, stride=2)
 
         self._feature_size = model_channels
         input_block_chans = [model_channels]
@@ -315,35 +314,50 @@ class ControlNet(nn.Module):
     def make_zero_conv(self, channels):
         return TimestepEmbedSequential(zero_module(conv_nd(self.dims, channels, channels, 1, padding=0)))
 
-    def embed_pose_into_ref(self, ref1_token, ref2_token, pose1, pose2):
-        pose1_embedded, pose2_embedded = self.pose_emb(pose1), self.pose_emb(pose2)  ## dim: B,64
+    def embed_pose_into_ref(self, ref1_token, ref2_token, ref1_latent, ref2_latent, pose1, pose2):
+        pose1_embedded = self.pose_emb(pose1)  # B, 64
+        pose2_embedded = self.pose_emb(pose2)  # B, 64
 
-        pose1_gamma_hf, pose1_beta_hf = self.hf_head(pose1_embedded)
-        pose1_gamma_sem, pose1_beta_sem = self.sem_head(pose1_embedded)      # đã squeeze trong return của forward filmhead
+        pose1_gamma_hf, pose1_beta_hf = self.hf_head(pose1_embedded)      # B, 1, 768
+        pose1_gamma_sem, pose1_beta_sem = self.sem_head(pose1_embedded)    # B, 1, 768
 
-        pose2_gamma_hf, pose2_beta_hf = self.hf_head(pose2_embedded)
-        pose2_gamma_sem, pose2_beta_sem = self.sem_head(pose2_embedded)
+        pose2_gamma_hf, pose2_beta_hf = self.hf_head(pose2_embedded)      # B, 1, 768
+        pose2_gamma_sem, pose2_beta_sem = self.sem_head(pose2_embedded)    # B, 1, 768
 
-        ref1_token = self.ref_proj(ref1_token)  ## từ 1024 -> context dim: 768
-        ref2_token = self.ref_proj(ref2_token)
+        # --- ref_hf: VAE latent, spatial detail ---
+        ref1_lat_down = self.ref_latent_downsample(ref1_latent)  # B, 4, 32, 32
+        ref2_lat_down = self.ref_latent_downsample(ref2_latent)  # B, 4, 32, 32
 
-        ref1_hf = ref1_token * (1 + pose1_gamma_hf) + pose1_beta_hf
-        ref2_hf = ref2_token * (1 + pose2_gamma_hf) + pose2_beta_hf
+        ref1_lat_seq = ref1_lat_down.flatten(2).transpose(1, 2)  # B, 1024, 4
+        ref2_lat_seq = ref2_lat_down.flatten(2).transpose(1, 2)  # B, 1024, 4
 
-        ref1_sem = ref1_token * (1 + pose1_gamma_sem) + pose1_beta_sem
-        ref2_sem = ref2_token * (1 + pose2_gamma_sem) + pose2_beta_sem
+        ref1_lat_seq = self.ref_latent_proj(ref1_lat_seq)  # B, 1024, 768
+        ref2_lat_seq = self.ref_latent_proj(ref2_lat_seq)  # B, 1024, 768
 
-        ref_hf = torch.cat([ref1_hf, ref2_hf], dim=1)
-        ref_sem = torch.cat([ref1_sem, ref2_sem], dim=1)
+        ref1_hf = ref1_lat_seq * (1 + pose1_gamma_hf) + pose1_beta_hf  # B, 1024, 768
+        ref2_hf = ref2_lat_seq * (1 + pose2_gamma_hf) + pose2_beta_hf  # B, 1024, 768
+
+        ref_hf = torch.cat([ref1_hf, ref2_hf], dim=1)  # B, 2048, 768
+
+        # --- ref_sem: CLIP token, semantic ---
+        ref1_token = self.ref_proj(ref1_token)  # B, 257, 768
+        ref2_token = self.ref_proj(ref2_token)  # B, 257, 768
+
+        ref1_sem = ref1_token * (1 + pose1_gamma_sem) + pose1_beta_sem  # B, 257, 768
+        ref2_sem = ref2_token * (1 + pose2_gamma_sem) + pose2_beta_sem  # B, 257, 768
+
+        ref_sem = torch.cat([ref1_sem, ref2_sem], dim=1)  # B, 514, 768
 
         return ref_hf, ref_sem
+    
 
-
-    def forward(self, x, hint, timesteps, ref_tokens, ref_poses, **kwargs):
+    def forward(self, x, hint, timesteps, ref_latent, ref_tokens, ref_poses, **kwargs):
         t_emb = timestep_embedding(timesteps, self.model_channels, repeat_only=False)
         emb = self.time_embed(t_emb)
         
-        context_hf, context = self.embed_pose_into_ref(ref_tokens[0], ref_tokens[1], ref_poses[0], ref_poses[1])
+        context_hf, context = self.embed_pose_into_ref(ref_tokens[0], ref_tokens[1], 
+                                                       ref_latent[0], ref_latent[1], 
+                                                       ref_poses[0], ref_poses[1])
 
         guided_hint = self.input_hint_block(hint, emb)   ## B,4,64,64 -> B,320,64,64
         guided_hint = self.art_ref_trans_block(guided_hint, context_hf)
@@ -393,13 +407,15 @@ class ControlLDM(LatentDiffusion):
         x, c = super().get_input(batch, self.first_stage_key, *args, **kwargs)
 
         control = batch[self.control_key]
-        if len(control.shape) == 3:
-            control = control[..., None]
-
         ref1 = batch[self.ref1_key]
         ref2 = batch[self.ref2_key]
         ref1_pose = batch[self.ref1_pose_key].to(self.device)
         ref2_pose = batch[self.ref2_pose_key].to(self.device)
+
+        if len(control.shape) == 3:
+            control = control[..., None]
+            ref1 = ref1[..., None]
+            ref2 = ref2[..., None]
 
         if bs is not None:
             control = control[:bs]
@@ -411,6 +427,7 @@ class ControlLDM(LatentDiffusion):
         control = control.to(self.device)
         control = einops.rearrange(control, 'b h w c -> b c h w')
         control = control.to(memory_format=torch.contiguous_format).float()
+        control = control * 2.0 - 1.0
         control_encoder_posterior = self.encode_first_stage(control)
         z_control = self.get_first_stage_encoding(control_encoder_posterior).detach()
 
@@ -425,7 +442,14 @@ class ControlLDM(LatentDiffusion):
         ref1_token = self.ref_cond_stage_model.encode(ref1)
         ref2_token = self.ref_cond_stage_model.encode(ref2)
 
-        return x, dict(c_crossattn=[c], c_concat=[z_control], c_ref_token=[ref1_token, ref2_token], c_ref_pose=[ref1_pose, ref2_pose])
+        ref1_latent = ref1 * 2.0 - 1.0
+        ref2_latent = ref2 * 2.0 - 1.0
+        ref1_posterior, ref2_posterior = self.encode_first_stage(ref1_latent), self.encode_first_stage(ref2_latent)
+        ref1_latent = self.get_first_stage_encoding(ref1_posterior).detach()
+        ref2_latent = self.get_first_stage_encoding(ref2_posterior).detach()
+
+        return x, dict(c_crossattn=[c], c_concat=[z_control], c_ref_latent=[ref1_latent, ref2_latent], 
+                       c_ref_token=[ref1_token, ref2_token], c_ref_pose=[ref1_pose, ref2_pose])
 
     def apply_model(self, x_noisy, t, cond, *args, **kwargs):
         assert isinstance(cond, dict)
@@ -437,7 +461,7 @@ class ControlLDM(LatentDiffusion):
             eps = diffusion_model(x=x_noisy, timesteps=t, context=cond_txt, control=None, only_mid_control=self.only_mid_control)
         else:
             control = self.control_model(x=x_noisy, hint=torch.cat(cond['c_concat'], 1), timesteps=t, 
-                                         ref_tokens=cond['c_ref_token'], ref_poses=cond['c_ref_pose'])
+                                         ref_tokens=cond['c_ref_token'], ref_poses=cond['c_ref_pose'], ref_latent=cond['c_ref_latent'])
             control = [c * scale for c, scale in zip(control, self.control_scales)]
             eps = diffusion_model(x=x_noisy, timesteps=t, context=cond_txt, control=control, only_mid_control=self.only_mid_control)
 
@@ -460,6 +484,7 @@ class ControlLDM(LatentDiffusion):
 
         c_cat, c = c_orig["c_concat"][0][:N], c_orig["c_crossattn"][0][:N]  ## This c var is text emb
 
+        c_ref1_latent, c_ref2_latent = c_orig["c_ref_latent"][0][:N], c_orig["c_ref_latent"][1][:N]
         c_ref1_token, c_ref2_token = c_orig["c_ref_token"][0][:N], c_orig["c_ref_token"][1][:N]
         c_ref1_pose, c_ref2_pose = c_orig["c_ref_pose"][0][:N], c_orig["c_ref_pose"][1][:N]
         
@@ -494,6 +519,7 @@ class ControlLDM(LatentDiffusion):
 
             # get denoise row
             samples, z_denoise_row = self.sample_log(cond={"c_concat": [c_cat], "c_crossattn": [c],
+                                                            "c_ref_latent": [c_ref1_latent, c_ref2_latent],
                                                             "c_ref_token": [c_ref1_token, c_ref2_token],
                                                             "c_ref_pose": [c_ref1_pose, c_ref2_pose]},
                                                      batch_size=N, ddim=use_ddim,
@@ -509,6 +535,7 @@ class ControlLDM(LatentDiffusion):
             uc_cat = c_cat  # torch.zeros_like(c_cat)
             uc_full = {"c_concat": [uc_cat], "c_crossattn": [uc_cross]}
             samples_cfg, _ = self.sample_log(cond={"c_concat": [c_cat], "c_crossattn": [c],
+                                                    "c_ref_latent": [c_ref1_latent, c_ref2_latent],
                                                     "c_ref_token": [c_ref1_token, c_ref2_token],
                                                     "c_ref_pose": [c_ref1_pose, c_ref2_pose]},
                                              batch_size=N, ddim=use_ddim,
