@@ -32,6 +32,11 @@ For continue training from checkpoint:
 - python tutorial_train.py
 
 
-For upload ckpt to hf repo:
+For uploading ckpt to hf repo:
 - hf auth login
 - hf upload minhphuong04/3dgs_cldm_dataset_and_weight ./weights/{fill here} --repo-type=dataset 
+
+
+For generating latent cache:
+- run step 1, 2, 3, 4
+- python cache_latent.py
