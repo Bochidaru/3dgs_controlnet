@@ -18,7 +18,12 @@
 4. run this for loading weight from sd1.5:
 - python tool_add_control.py v1-5-pruned.ckpt ./models/control_sd15_ini.ckpt 
 
-5. run tutorial_train.py :
+5. (optional) for faster training, use latent cache, which cached control, ref1, ref2 latent
+- hf download minhphuong04/3dgs_cldm_dataset_and_weight cache_latent.zip --repo-type=dataset --local-dir .
+- unzip cache_latent.zip
+- use_cached_latent=True in MyDataset
+
+6. run tutorial_train.py :
 - python tutorial_train.py
 
 
@@ -34,5 +39,3 @@ For continue training from checkpoint:
 For upload ckpt to hf repo:
 - hf auth login
 - hf upload minhphuong04/3dgs_cldm_dataset_and_weight ./weights/{fill here} --repo-type=dataset 
-
-HAVE FUN!!

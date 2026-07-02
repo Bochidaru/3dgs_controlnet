@@ -39,17 +39,18 @@ def resize_and_pad_to_square(img, target_size=(512, 512)):
     return img_padded, pad_info
 
 
-def get_save_path(img_path):
+def get_save_path(img_path, cache_latent_root_path):
     dirname = os.path.dirname(img_path)
     filename = os.path.basename(img_path)
     parts = filename.split('_', 1)
     clean_name = parts[1] if parts[0] in ('ref1', 'ref2') else filename
-    return os.path.join(dirname, os.path.splitext(clean_name)[0] + '.pt')
+    return os.path.join(cache_latent_root_path, dirname, os.path.splitext(clean_name)[0] + '.pt')
 
 
 class MyDataset(Dataset):
     def __init__(self, target_size=(512,512), isTest=False, use_cached_latent=False):
         self.use_cached_latent = use_cached_latent
+        self.cache_latent_root_path = "./cache_latent/" if self.use_cached_latent else None
         self.data = []
         self.root_path = "./cldm_dataset/"
         self.target_size = target_size
@@ -140,9 +141,12 @@ class MyDataset(Dataset):
                       pad_info=source_pad_info)
         
         if self.use_cached_latent:
-            result['z_control']   = torch.load(get_save_path(source_path), map_location='cpu')
-            result['ref1_latent'] = torch.load(get_save_path(ref1_path),   map_location='cpu')
-            result['ref2_latent'] = torch.load(get_save_path(ref2_path),   map_location='cpu')
+            source_latent_path = get_save_path(source_path.split("/", 1)[1], self.cache_latent_root_path)
+            ref1_latent_path = get_save_path(ref1_path.split("/", 1)[1], self.cache_latent_root_path)
+            ref2_latent_path = get_save_path(ref1_path.split("/", 1)[1], self.cache_latent_root_path)
+            result['z_control']   = torch.load(source_latent_path, map_location='cpu')
+            result['ref1_latent'] = torch.load(ref1_latent_path,   map_location='cpu')
+            result['ref2_latent'] = torch.load(ref2_latent_path,   map_location='cpu')
 
         return result
 

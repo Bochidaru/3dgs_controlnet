@@ -47,7 +47,7 @@ model.sd_locked = sd_locked
 model.only_mid_control = only_mid_control
 
 # Misc
-dataset = MyDataset()
+dataset = MyDataset(isTest=False, use_cached_latent=True)
 dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True, 
                         num_workers=num_workers, pin_memory=pin_memory, 
                         persistent_workers=persistent_workers, prefetch_factor=prefetch_factor)
