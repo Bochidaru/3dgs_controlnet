@@ -50,7 +50,7 @@ def get_save_path(img_path):
 
 
 class MyDataset(Dataset):
-    def __init__(self, root_path="./cldm_dataset" ,target_size=(512,512), isTest=False, use_cached_latent=False):
+    def __init__(self, root_path="./cldm_dataset/" ,target_size=(512,512), isTest=False, use_cached_latent=False):
         self.use_cached_latent = use_cached_latent
         self.cache_latent_root_path = "./cache_latent/" if self.use_cached_latent else None
         self.data = []
@@ -110,6 +110,11 @@ class MyDataset(Dataset):
         ref1_path   = self.root_path + item["ref"]["ref1"]["path"]
         ref2_path   = self.root_path + item["ref"]["ref2"]["path"]
         
+        print("SOURCE:", source_path)
+        print("TARGET:", target_path)
+        print("REF1:", ref1_path)
+        print("REF2:", ref2_path)
+
         prompt      = ""
 
         ref1_pose   = self.normalize_pose(item["ref"]["ref1"]["pose_rel"])
