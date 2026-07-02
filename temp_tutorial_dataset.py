@@ -105,16 +105,11 @@ class MyDataset(Dataset):
     def __getitem__(self, idx):
         item = self.data[idx]
 
-        source_path = self.root_path + item['source']  # Artifact image
-        target_path = self.root_path + item['target']  # Groundtruth image
-        ref1_path   = self.root_path + item["ref"]["ref1"]["path"]
-        ref2_path   = self.root_path + item["ref"]["ref2"]["path"]
+        source_path = os.path.join(self.root_path, item['source'])  # Artifact image
+        target_path = os.path.join(self.root_path, item['target'])  # Groundtruth image
+        ref1_path   = os.path.join(self.root_path, item["ref"]["ref1"]["path"])
+        ref2_path   = os.path.join(self.root_path, item["ref"]["ref2"]["path"])
         
-        print("SOURCE:", source_path)
-        print("TARGET:", target_path)
-        print("REF1:", ref1_path)
-        print("REF2:", ref2_path)
-
         prompt      = ""
 
         ref1_pose   = self.normalize_pose(item["ref"]["ref1"]["pose_rel"])

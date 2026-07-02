@@ -99,10 +99,10 @@ class MyDataset(Dataset):
     def __getitem__(self, idx):
         item = self.data[idx]
 
-        source_path = self.root_path + item['source']  # Artifact image
-        target_path = self.root_path + item['target']  # Groundtruth image
-        ref1_path   = self.root_path + item["ref"]["ref1"]["path"]
-        ref2_path   = self.root_path + item["ref"]["ref2"]["path"]
+        source_path = os.path.join(self.root_path, item['source'])  # Artifact image
+        target_path = os.path.join(self.root_path, item['target'])  # Groundtruth image
+        ref1_path   = os.path.join(self.root_path, item["ref"]["ref1"]["path"])
+        ref2_path   = os.path.join(self.root_path, item["ref"]["ref2"]["path"])
         
         prompt      = ""
 
