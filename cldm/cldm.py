@@ -359,7 +359,7 @@ class ControlNet(nn.Module):
                                                        ref_latent[0], ref_latent[1], 
                                                        ref_poses[0], ref_poses[1])
 
-        guided_hint = self.input_hint_block(hint, emb)   ## B,4,64,64 -> B,320,64,64
+        guided_hint = self.input_hint_block(hint, emb)   ## B,4,64,64 -> B,320,64,64   đưa lên 320 để match với h += guided_hint
         guided_hint = self.art_ref_trans_block(guided_hint, context_hf)
 
         outs = []
@@ -397,14 +397,15 @@ class ControlLDM(LatentDiffusion):
 
     def instantiate_ref_cond_stage(self, config):
         model = instantiate_from_config(config)
-        self.ref_cond_stage_model = model.eval()
-        self.ref_cond_stage_model.train = disabled_train
-        for param in self.ref_cond_stage_model.parameters():
-            param.requires_grad = False
+        if model:
+            self.ref_cond_stage_model = model.eval()
+            self.ref_cond_stage_model.train = disabled_train
+            for param in self.ref_cond_stage_model.parameters():
+                param.requires_grad = False
 
     @torch.no_grad()
     def get_input(self, batch, k, bs=None, *args, **kwargs):
-        x, c = super().get_input(batch, self.first_stage_key, *args, **kwargs)
+        x, c = super().get_input(batch, self.first_stage_key, *args, **kwargs)   ## first_stage_key = jpg = hint
 
         control = batch[self.control_key]
         ref1 = batch[self.ref1_key]
