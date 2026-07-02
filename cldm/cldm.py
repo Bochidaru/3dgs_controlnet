@@ -403,15 +403,43 @@ class ControlLDM(LatentDiffusion):
             for param in self.ref_cond_stage_model.parameters():
                 param.requires_grad = False
 
-    @torch.no_grad()
-    def get_input(self, batch, k, bs=None, *args, **kwargs):
-        x, c = super().get_input(batch, self.first_stage_key, *args, **kwargs)   ## first_stage_key = jpg = hint
+@torch.no_grad()
+def get_input(self, batch, k, bs=None, *args, **kwargs):
+    x, c = super().get_input(batch, self.first_stage_key, *args, **kwargs)
 
+    ref1_pose = batch[self.ref1_pose_key].to(self.device)
+    ref2_pose = batch[self.ref2_pose_key].to(self.device)
+
+    if bs is not None:
+        ref1_pose = ref1_pose[:bs]
+        ref2_pose = ref2_pose[:bs]
+
+    if 'z_control' in batch:
+        # Dùng cache
+        z_control   = batch['z_control'].to(self.device)
+        ref1_latent = batch['ref1_latent'].to(self.device)
+        ref2_latent = batch['ref2_latent'].to(self.device)
+
+        if bs is not None:
+            z_control   = z_control[:bs]
+            ref1_latent = ref1_latent[:bs]
+            ref2_latent = ref2_latent[:bs]
+
+        # Vẫn cần ref1, ref2 raw cho CLIP
+        ref1 = batch[self.ref1_key].to(self.device)
+        ref2 = batch[self.ref2_key].to(self.device)
+        ref1 = einops.rearrange(ref1, 'b h w c -> b c h w').to(memory_format=torch.contiguous_format).float()
+        ref2 = einops.rearrange(ref2, 'b h w c -> b c h w').to(memory_format=torch.contiguous_format).float()
+
+        if bs is not None:
+            ref1 = ref1[:bs]
+            ref2 = ref2[:bs]
+
+    else:
+        # Encode online
         control = batch[self.control_key]
-        ref1 = batch[self.ref1_key]
-        ref2 = batch[self.ref2_key]
-        ref1_pose = batch[self.ref1_pose_key].to(self.device)
-        ref2_pose = batch[self.ref2_pose_key].to(self.device)
+        ref1    = batch[self.ref1_key]
+        ref2    = batch[self.ref2_key]
 
         if len(control.shape) == 3:
             control = control[..., None]
@@ -422,37 +450,29 @@ class ControlLDM(LatentDiffusion):
 
         if bs is not None:
             control = control[:bs]
-            ref1 = ref1[:bs]
-            ref2 = ref2[:bs]
-            ref1_pose = ref1_pose[:bs]
-            ref2_pose = ref2_pose[:bs]
+            ref1    = ref1[:bs]
+            ref2    = ref2[:bs]
 
-        control = control.to(self.device)
-        control = einops.rearrange(control, 'b h w c -> b c h w')
+        control = einops.rearrange(control, 'b h w c -> b c h w').to(self.device)
         control = control.to(memory_format=torch.contiguous_format).float()
-        control = control * 2.0 - 1.0
-        control_encoder_posterior = self.encode_first_stage(control)
-        z_control = self.get_first_stage_encoding(control_encoder_posterior).detach()
 
-        ref1 = ref1.to(self.device)
-        ref1 = einops.rearrange(ref1, 'b h w c -> b c h w')
+        ref1 = einops.rearrange(ref1, 'b h w c -> b c h w').to(self.device)
         ref1 = ref1.to(memory_format=torch.contiguous_format).float()
 
-        ref2 = ref2.to(self.device)
-        ref2 = einops.rearrange(ref2, 'b h w c -> b c h w').float()
+        ref2 = einops.rearrange(ref2, 'b h w c -> b c h w').to(self.device)
         ref2 = ref2.to(memory_format=torch.contiguous_format).float()
 
-        ref1_token = self.ref_cond_stage_model.encode(ref1)
-        ref2_token = self.ref_cond_stage_model.encode(ref2)
+        z_control   = self.get_first_stage_encoding(self.encode_first_stage(control * 2.0 - 1.0)).detach()
+        ref1_latent = self.get_first_stage_encoding(self.encode_first_stage(ref1 * 2.0 - 1.0)).detach()
+        ref2_latent = self.get_first_stage_encoding(self.encode_first_stage(ref2 * 2.0 - 1.0)).detach()
 
-        ref1_latent = ref1 * 2.0 - 1.0
-        ref2_latent = ref2 * 2.0 - 1.0
-        ref1_posterior, ref2_posterior = self.encode_first_stage(ref1_latent), self.encode_first_stage(ref2_latent)
-        ref1_latent = self.get_first_stage_encoding(ref1_posterior).detach()
-        ref2_latent = self.get_first_stage_encoding(ref2_posterior).detach()
+    ref1_token = self.ref_cond_stage_model.encode(ref1)
+    ref2_token = self.ref_cond_stage_model.encode(ref2)
 
-        return x, dict(c_crossattn=[c], c_concat=[z_control], c_ref_latent=[ref1_latent, ref2_latent], 
-                       c_ref_token=[ref1_token, ref2_token], c_ref_pose=[ref1_pose, ref2_pose])
+    return x, dict(c_crossattn=[c], c_concat=[z_control],
+                   c_ref_latent=[ref1_latent, ref2_latent],
+                   c_ref_token=[ref1_token, ref2_token],
+                   c_ref_pose=[ref1_pose, ref2_pose])
 
     def apply_model(self, x_noisy, t, cond, *args, **kwargs):
         assert isinstance(cond, dict)

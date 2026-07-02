@@ -83,17 +83,18 @@ def precompute_latents(config_path, ckpt_path, root_path, target_size=(512, 512)
     encoded_cache = {}  # cache_key -> save_path
 
     def encode_and_save(img_path, save_path, dataset_tag, is_source=False):
-        cache_key = get_cache_key(img_path, dataset_tag)
+        if is_source:
+            cache_key = get_cache_key(img_path, dataset_tag)
+            
+            if cache_key in encoded_cache:
+                src = encoded_cache[cache_key]
+                if src != save_path and not os.path.exists(save_path):
+                    shutil.copy(src, save_path)
+                return
 
-        if cache_key in encoded_cache:
-            src = encoded_cache[cache_key]
-            if src != save_path and not os.path.exists(save_path):
-                shutil.copy(src, save_path)
-            return
-
-        if os.path.exists(save_path):
-            encoded_cache[cache_key] = save_path
-            return
+            if os.path.exists(save_path):
+                encoded_cache[cache_key] = save_path
+                return
 
         img = cv2.imread(img_path)
         if img is None:

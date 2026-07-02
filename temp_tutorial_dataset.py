@@ -3,6 +3,8 @@
 import json
 import cv2
 import numpy as np
+import os
+import torch
 
 from torch.utils.data import Dataset
 
@@ -39,8 +41,17 @@ def resize_and_pad_to_square(img, target_size=(512, 512)):
     return img_padded, pad_info
 
 
+def get_save_path(img_path):
+    dirname = os.path.dirname(img_path)
+    filename = os.path.basename(img_path)
+    parts = filename.split('_', 1)
+    clean_name = parts[1] if parts[0] in ('ref1', 'ref2') else filename
+    return os.path.join(dirname, os.path.splitext(clean_name)[0] + '.pt')
+
+
 class MyDataset(Dataset):
-    def __init__(self, target_size=(512,512), isTest=False):
+    def __init__(self, target_size=(512,512), isTest=False, use_cached_latent=False):
+        self.use_cached_latent = use_cached_latent
         self.data = []
         self.root_path = "./cldm_dataset/"
         self.target_size = target_size
@@ -129,8 +140,15 @@ class MyDataset(Dataset):
         # Normalize target images to [-1, 1].
         target = (target.astype(np.float32) / 127.5) - 1.0
 
-        return dict(jpg=target, txt=prompt, hint=source, 
-                    ref1=ref1, ref1_pose=ref1_pose, 
-                    ref2=ref2, ref2_pose=ref2_pose,
-                    pad_info=source_pad_info)  # các ảnh đều như nhau về shape nên pad giống nhau?
+        result = dict(jpg=target, txt=prompt, hint=source,
+                      ref1=ref1, ref1_pose=ref1_pose,
+                      ref2=ref2, ref2_pose=ref2_pose,
+                      pad_info=source_pad_info)
+        
+        if self.use_cached_latent:
+            result['z_control']   = torch.load(get_save_path(source_path), map_location='cpu')
+            result['ref1_latent'] = torch.load(get_save_path(ref1_path),   map_location='cpu')
+            result['ref2_latent'] = torch.load(get_save_path(ref2_path),   map_location='cpu')
+
+        return result
 
