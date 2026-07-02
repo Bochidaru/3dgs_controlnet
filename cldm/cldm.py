@@ -414,7 +414,9 @@ class ControlLDM(LatentDiffusion):
 
         if len(control.shape) == 3:
             control = control[..., None]
+        if len(ref1.shape) == 3:
             ref1 = ref1[..., None]
+        if len(ref2.shape) == 3:
             ref2 = ref2[..., None]
 
         if bs is not None:
