@@ -25,7 +25,7 @@ class ImageLogger(Callback):
         self.log_first_step = log_first_step
 
         # For global step
-        self.last_log_step = -1
+        self.train_last_log_step = -1
 
     @rank_zero_only
     def log_local(self, save_dir, split, images, global_step, current_epoch, batch_idx):
@@ -43,17 +43,11 @@ class ImageLogger(Callback):
             Image.fromarray(grid).save(path)
 
     def log_img(self, pl_module, batch, batch_idx, split="train"):
-        check_idx = pl_module.global_step
 
-        if check_idx == self.last_log_step:
-            return
-
-        if (self.check_frequency(check_idx) and  # batch_idx % self.batch_freq == 0
+        if ( # batch_idx % self.batch_freq == 0
                 hasattr(pl_module, "log_images") and
                 callable(pl_module.log_images) and
                 self.max_images > 0):
-
-            self.last_log_step = check_idx
             
             logger = type(pl_module.logger)
 
@@ -83,4 +77,17 @@ class ImageLogger(Callback):
 
     def on_train_batch_end(self, trainer, pl_module, outputs, batch, batch_idx, dataloader_idx=None):
         if not self.disabled:
-            self.log_img(pl_module, batch, batch_idx, split="train")
+            check_idx = pl_module.global_step
+            if check_idx == self.train_last_log_step:
+                return
+            if self.check_frequency(check_idx):
+                self.train_last_log_step = check_idx
+                self.log_img(pl_module, batch, batch_idx, split="train")
+
+    def on_validation_batch_end(self, trainer, pl_module, outputs, batch, batch_idx, dataloader_idx=None):
+        if self.disabled or pl_module.logger is None or pl_module.logger.save_dir is None:
+            return
+
+        if batch_idx == 0:
+            self.log_img(pl_module, batch, batch_idx, split="val")
+            

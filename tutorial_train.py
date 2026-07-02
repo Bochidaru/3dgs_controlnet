@@ -52,6 +52,11 @@ dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True,
                         num_workers=num_workers, pin_memory=pin_memory, 
                         persistent_workers=persistent_workers, prefetch_factor=prefetch_factor)
 
+val_dataset = MyDataset(isTest=True, use_cached_latent=True)
+val_dataloader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, 
+                        num_workers=num_workers, pin_memory=pin_memory, 
+                        persistent_workers=persistent_workers, prefetch_factor=prefetch_factor)
+
 log_images_kwargs = {
     "sample": True,             ### Tắt CFG, vì text luôn empty
     "unconditional_guidance_scale": 1.0   
@@ -59,7 +64,10 @@ log_images_kwargs = {
 logger = ImageLogger(batch_frequency=image_logger_freq, log_images_kwargs=log_images_kwargs)
 trainer = pl.Trainer(accelerator="gpu", 
                      precision="bf16-mixed", 
-                     callbacks=[logger, checkpoint_callback], 
+                     callbacks=[logger, checkpoint_callback],
+                     val_check_interval=image_logger_freq * accumulate_grad_batches,  # tính theo batch, -> * accu = global step
+                     limit_val_batches=1,
+                     num_sanity_val_steps=0,
                      accumulate_grad_batches=accumulate_grad_batches, 
                      max_steps=30000)
 
@@ -67,8 +75,13 @@ trainer = pl.Trainer(accelerator="gpu",
 # Train!
 if resume_ckpt_path and os.path.exists(resume_ckpt_path):
     print(f"!!! CONTINUE FROM CHECKPOINT {resume_ckpt_path}!!!")
-    trainer.fit(model, train_dataloaders=dataloader, ckpt_path=resume_ckpt_path)
+    trainer.fit(model, 
+                train_dataloaders=dataloader, 
+                val_dataloaders=val_dataloader,
+                ckpt_path=resume_ckpt_path)
 else:
     print("!!! INIT TRAIN !!!")
     model.load_state_dict(load_state_dict(pretrain_path))
-    trainer.fit(model, train_dataloaders=dataloader)
+    trainer.fit(model, 
+                train_dataloaders=dataloader, 
+                val_dataloaders=val_dataloader)

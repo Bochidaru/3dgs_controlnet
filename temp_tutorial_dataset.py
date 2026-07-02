@@ -50,11 +50,11 @@ def get_save_path(img_path):
 
 
 class MyDataset(Dataset):
-    def __init__(self, target_size=(512,512), isTest=False, use_cached_latent=False):
+    def __init__(self, root_path="./cldm_dataset" ,target_size=(512,512), isTest=False, use_cached_latent=False):
         self.use_cached_latent = use_cached_latent
         self.cache_latent_root_path = "./cache_latent/" if self.use_cached_latent else None
         self.data = []
-        self.root_path = "./cldm_dataset/"
+        self.root_path = root_path
         self.target_size = target_size
 
         poses_xyz_alldataset = []
