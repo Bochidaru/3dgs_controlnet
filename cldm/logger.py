@@ -11,7 +11,7 @@ from pytorch_lightning.utilities import rank_zero_only
 class ImageLogger(Callback):
     def __init__(self, batch_frequency=2000, max_images=4, clamp=True, increase_log_steps=True,
                  rescale=True, disabled=False, log_on_batch_idx=False, log_first_step=False,
-                 log_images_kwargs=None):
+                 log_images_kwargs=None, val_batch_cache=[]):
         super().__init__()
         self.rescale = rescale
         self.batch_freq = batch_frequency
@@ -26,6 +26,8 @@ class ImageLogger(Callback):
 
         # For global step
         self.train_last_log_step = -1
+
+        self.val_batch_cache = val_batch_cache
 
     @rank_zero_only
     def log_local(self, save_dir, split, images, global_step, current_epoch, batch_idx):
@@ -83,11 +85,7 @@ class ImageLogger(Callback):
             if self.check_frequency(check_idx):
                 self.train_last_log_step = check_idx
                 self.log_img(pl_module, batch, batch_idx, split="train")
+                for idx, val_batch in enumerate(self.val_batch_cache):
+                    self.log_img(pl_module, val_batch, idx, split="val")
 
-    def on_validation_batch_end(self, trainer, pl_module, outputs, batch, batch_idx, dataloader_idx=None):
-        if self.disabled or pl_module.logger is None or pl_module.logger.save_dir is None:
-            return
-
-        if batch_idx == 0:
-            self.log_img(pl_module, batch, batch_idx, split="val")
             

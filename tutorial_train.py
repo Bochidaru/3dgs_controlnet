@@ -18,6 +18,7 @@ pl.seed_everything(42, workers=True)
 learning_rate = 1e-5
 sd_locked = True
 only_mid_control = False
+num_val_batches = 1
 image_logger_freq = 250
 
 accumulate_grad_batches = 4             ## With 80gb vram, use bs=24, accu=4
@@ -53,21 +54,20 @@ dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True,
                         persistent_workers=persistent_workers, prefetch_factor=prefetch_factor)
 
 val_dataset = MyDataset(isTest=True, use_cached_latent=True)
-val_dataloader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, 
-                        num_workers=num_workers, pin_memory=pin_memory, 
-                        persistent_workers=persistent_workers, prefetch_factor=prefetch_factor)
+val_batches = []
+val_dataloader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
+val_iter = iter(val_dataloader)
+for _ in range(num_val_batches):
+    val_batches.append(next(val_iter))
 
 log_images_kwargs = {
     "sample": True,             ### Tắt CFG, vì text luôn empty
     "unconditional_guidance_scale": 1.0   
 }
-logger = ImageLogger(batch_frequency=image_logger_freq, log_images_kwargs=log_images_kwargs)
+logger = ImageLogger(batch_frequency=image_logger_freq, log_images_kwargs=log_images_kwargs, val_batch_cache=val_batches)
 trainer = pl.Trainer(accelerator="gpu", 
                      precision="bf16-mixed", 
                      callbacks=[logger, checkpoint_callback],
-                     val_check_interval=image_logger_freq * accumulate_grad_batches,  # tính theo batch, -> * accu = global step
-                     limit_val_batches=1,
-                     num_sanity_val_steps=0,
                      accumulate_grad_batches=accumulate_grad_batches, 
                      max_steps=30000)
 
@@ -75,13 +75,8 @@ trainer = pl.Trainer(accelerator="gpu",
 # Train!
 if resume_ckpt_path and os.path.exists(resume_ckpt_path):
     print(f"!!! CONTINUE FROM CHECKPOINT {resume_ckpt_path}!!!")
-    trainer.fit(model, 
-                train_dataloaders=dataloader, 
-                val_dataloaders=val_dataloader,
-                ckpt_path=resume_ckpt_path)
+    trainer.fit(model, train_dataloaders=dataloader, ckpt_path=resume_ckpt_path)
 else:
     print("!!! INIT TRAIN !!!")
     model.load_state_dict(load_state_dict(pretrain_path))
-    trainer.fit(model, 
-                train_dataloaders=dataloader, 
-                val_dataloaders=val_dataloader)
+    trainer.fit(model, train_dataloaders=dataloader)
