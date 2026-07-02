@@ -4,6 +4,8 @@ cldm_dataset/
 
 cache_latent/
 
+image_log/
+
 .vscode/
 
 __pycache__/
