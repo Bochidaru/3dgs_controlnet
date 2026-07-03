@@ -6,8 +6,8 @@
 - conda env update --file environment.yaml --prune         (for lightning ai)
 
 2. get the dataset:
-- hf download minhphuong04/3dgs_cldm_dataset_and_weight cldm_dataset.zip --repo-type=dataset --local-dir . && sync && unzip cldm_dataset.zip
-
+- hf download minhphuong04/3dgs_cldm_dataset_and_weight cldm_dataset.zip --repo-type=dataset --local-dir . 
+- unzip cldm_dataset.zip
 
 3. get the sd1.5 weight from hf:
 - option 1: hf download stable-diffusion-v1-5/stable-diffusion-v1-5 v1-5-pruned.ckpt --repo-type=model --local-dir .
@@ -17,7 +17,8 @@
 - python tool_add_control.py v1-5-pruned.ckpt ./models/control_sd15_ini.ckpt 
 
 5. (optional) for faster training, use latent cache, which cached control, ref1, ref2 latent
-- hf download minhphuong04/3dgs_cldm_dataset_and_weight cache_latent.zip --repo-type=dataset --local-dir . && sync && unzip cache_latent.zip
+- hf download minhphuong04/3dgs_cldm_dataset_and_weight cache_latent.zip --repo-type=dataset --local-dir .
+- unzip cache_latent.zip
 - use_cached_latent=True in MyDataset
 
 6. run tutorial_train.py :
