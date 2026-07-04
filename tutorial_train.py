@@ -1,6 +1,7 @@
 from share import *
 
 import pytorch_lightning as pl
+import torch
 from torch.utils.data import DataLoader
 from temp_tutorial_dataset import MyDataset   ## !!!!!!!!!!!!!!! RM THIS WHEN DONE NEW DS
 from cldm.logger import ImageLogger
@@ -15,6 +16,7 @@ warnings.filterwarnings("ignore", category=FutureWarning)
 resume_ckpt_path = ""                             ## For example: "./models/weights-epoch=30-step=2000.ckpt"
 pretrain_path = './models/control_sd15_ini.ckpt'
 pl.seed_everything(42, workers=True)
+use_cache_latent = True
 learning_rate = 1e-5
 sd_locked = True
 only_mid_control = False
@@ -48,14 +50,16 @@ model.sd_locked = sd_locked
 model.only_mid_control = only_mid_control
 
 # Misc
-dataset = MyDataset(isTest=False, use_cached_latent=True)
+dataset = MyDataset(isTest=False, use_cached_latent=use_cache_latent)
 dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True, 
                         num_workers=num_workers, pin_memory=pin_memory, 
                         persistent_workers=persistent_workers, prefetch_factor=prefetch_factor)
 
 val_dataset = MyDataset(isTest=True, use_cached_latent=True)
 val_batches = []
-val_dataloader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
+g = torch.Generator()
+g.manual_seed(42)
+val_dataloader = DataLoader(val_dataset, batch_size=batch_size, shuffle=True, generator=g)
 val_iter = iter(val_dataloader)
 for _ in range(num_val_batches):
     val_batches.append(next(val_iter))
