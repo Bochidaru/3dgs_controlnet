@@ -56,7 +56,7 @@ class MyDataset(Dataset):
             f"max_ref must be int >= 2, but got {max_ref} ({type(max_ref)})"
 
         self.use_cached_latent = use_cached_latent
-        self.cache_latent_root_path = "./cache_latent/" if self.use_cached_latent else None
+        self.cache_latent_root_path = "./cache_cldm_dataset/" if self.use_cached_latent else None
         self.data = []
         self.root_path = root_path
         self.target_size = target_size
