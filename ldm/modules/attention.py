@@ -222,23 +222,41 @@ class MemoryEfficientCrossAttention(nn.Module):
         b, _, _ = q.shape
         q, k, v = map(
             lambda t: t.unsqueeze(3)
-            .reshape(b, t.shape[1], self.heads, self.dim_head)
-            .permute(0, 2, 1, 3)
-            .reshape(b * self.heads, t.shape[1], self.dim_head)
-            .contiguous(),
+                .reshape(b, t.shape[1], self.heads, self.dim_head)
+                .permute(0, 2, 1, 3)
+                .reshape(b * self.heads, t.shape[1], self.dim_head)
+                .contiguous(),
             (q, k, v),
         )
 
-        # actually compute the attention, what we cannot get enough of
-        out = xformers.ops.memory_efficient_attention(q, k, v, attn_bias=None, op=self.attention_op)
-
+        # Xử lý mask cho xformers
+        attn_bias = None
         if exists(mask):
-            raise NotImplementedError
+            # mask: (B, tokens) bool
+            # xformers cần attn_bias shape: (B*heads, query_len, key_len)
+            query_len = q.shape[1]
+            key_len   = k.shape[1]
+
+            # (B, 1, tokens) → (B, query_len, key_len)
+            attn_bias = mask.bool()                                      # (B, tokens)
+            attn_bias = attn_bias[:, None, :]                            # (B, 1, key_len)
+            attn_bias = attn_bias.expand(b, query_len, key_len)          # (B, Q, K)
+            attn_bias = repeat(attn_bias, 'b q k -> (b h) q k', h=self.heads)  # (B*h, Q, K)
+
+            # xformers nhận float bias, không phải bool mask
+            attn_bias = torch.zeros_like(attn_bias, dtype=q.dtype).masked_fill_(
+                ~attn_bias, float('-inf')
+            )
+
+        out = xformers.ops.memory_efficient_attention(
+            q, k, v, attn_bias=attn_bias, op=self.attention_op
+        )
+
         out = (
             out.unsqueeze(0)
-            .reshape(b, self.heads, out.shape[1], self.dim_head)
-            .permute(0, 2, 1, 3)
-            .reshape(b, out.shape[1], self.heads * self.dim_head)
+                .reshape(b, self.heads, out.shape[1], self.dim_head)
+                .permute(0, 2, 1, 3)
+                .reshape(b, out.shape[1], self.heads * self.dim_head)
         )
         return self.to_out(out)
 
@@ -265,12 +283,12 @@ class BasicTransformerBlock(nn.Module):
         self.norm3 = nn.LayerNorm(dim)
         self.checkpoint = checkpoint
 
-    def forward(self, x, context=None):
-        return checkpoint(self._forward, (x, context), self.parameters(), self.checkpoint)
+    def forward(self, x, context=None, context_mask=None):
+        return checkpoint(self._forward, (x, context, context_mask), self.parameters(), self.checkpoint)
 
-    def _forward(self, x, context=None):
+    def _forward(self, x, context=None, context_mask=None):
         x = self.attn1(self.norm1(x), context=context if self.disable_self_attn else None) + x
-        x = self.attn2(self.norm2(x), context=context) + x
+        x = self.attn2(self.norm2(x), context=context, mask=context_mask) + x
         x = self.ff(self.norm3(x)) + x
         return x
 
@@ -318,7 +336,7 @@ class SpatialTransformer(nn.Module):
             self.proj_out = zero_module(nn.Linear(in_channels, inner_dim))
         self.use_linear = use_linear
 
-    def forward(self, x, context=None):
+    def forward(self, x, context=None, context_mask=None):
         # note: if no context is given, cross-attention defaults to self-attention
         if not isinstance(context, list):
             context = [context]
@@ -331,7 +349,7 @@ class SpatialTransformer(nn.Module):
         if self.use_linear:
             x = self.proj_in(x)
         for i, block in enumerate(self.transformer_blocks):
-            x = block(x, context=context[i])
+            x = block(x, context=context[i], context_mask=context_mask)
         if self.use_linear:
             x = self.proj_out(x)
         x = rearrange(x, 'b (h w) c -> b c h w', h=h, w=w).contiguous()

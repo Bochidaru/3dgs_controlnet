@@ -21,4 +21,4 @@ class FiLMHead(nn.Module):
 
         gamma, beta = out.chunk(2, dim=-1)
 
-        return gamma.unsqueeze(1), beta.unsqueeze(1)
+        return gamma, beta

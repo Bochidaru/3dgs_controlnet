@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 from torch.utils.checkpoint import checkpoint
 
-from transformers import T5Tokenizer, T5EncoderModel, CLIPTokenizer, CLIPTextModel
+from transformers import T5Tokenizer, T5EncoderModel, CLIPTokenizer, CLIPTextModel, AutoImageProcessor, AutoModel
 
 import timm
 from timm.data import resolve_data_config
@@ -10,6 +10,7 @@ from timm.data.transforms_factory import create_transform
 from PIL import Image
 
 import torchvision.transforms.functional as F
+from torchvision import models
 
 # import open_clip
 from ldm.util import default, count_params
@@ -279,6 +280,83 @@ class FrozenDFN2BImageEmbedder(AbstractEncoder):
         x = x.to(self.device, non_blocking=True)
         with torch.no_grad():
             tokens = self.model.forward_features(x)
+        return tokens
+
+    def encode(self, x):
+        return self(x)
+
+
+class FrozenDINOv2ImageEmbedder(AbstractEncoder):
+    """
+    Input:
+        - torch.Tensor BCHW float32 in [0,1]
+        - PIL.Image
+        - List[PIL.Image]
+
+    Output:
+        tokens: [B, 257, 1024]  (DINOv2-Large)
+    """
+
+    def __init__(
+        self,
+        model_name="facebook/dinov2-large",
+        device="cuda",
+        freeze=True,
+    ):
+        super().__init__()
+
+        self.device = torch.device(device)
+
+        self.processor = AutoImageProcessor.from_pretrained(model_name)
+
+        self.model = AutoModel.from_pretrained(
+            model_name
+        ).to(self.device)
+
+        if freeze:
+            self.freeze()
+
+    def freeze(self):
+        self.model.eval()
+        for p in self.model.parameters():
+            p.requires_grad = False
+
+    def forward(self, x):
+        if isinstance(x, torch.Tensor):
+            assert x.ndim == 4, \
+                f"Expected BCHW, got {x.shape}"
+            inputs = self.processor(
+                images=x,
+                return_tensors="pt",
+                # Dataset [0,1]
+                do_rescale=False
+            )
+        elif isinstance(x, Image.Image):
+            inputs = self.processor(
+                images=x,
+                return_tensors="pt"
+            )
+
+        elif isinstance(x, list) and all(
+            isinstance(i, Image.Image) for i in x
+        ):
+            inputs = self.processor(
+                images=x,
+                return_tensors="pt"
+            )
+        else:
+            raise TypeError(
+                f"Unsupported input type: {type(x)}"
+            )
+        inputs = {
+            k: v.to(self.device, non_blocking=True)
+            for k, v in inputs.items()
+        }
+
+        with torch.no_grad():
+            outputs = self.model(**inputs)
+            tokens = outputs.last_hidden_state
+
         return tokens
 
     def encode(self, x):

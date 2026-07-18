@@ -6,13 +6,9 @@ model:
     num_timesteps_cond: 1
     log_every_t: 200
     timesteps: 1000
-    first_stage_key: "jpg"
+    first_stage_key: "groundtruth"
     cond_stage_key: "txt"
-    control_key: "hint"
-    ref1_key: "ref1"
-    ref2_key: "ref2"
-    ref1_pose_key: "ref1_pose"
-    ref2_pose_key: "ref2_pose"
+    control_key: "artifact"
     image_size: 64
     channels: 4
     cond_stage_trainable: false
@@ -84,4 +80,4 @@ model:
       target: ldm.modules.encoders.modules.FrozenCLIPEmbedder
 
     ref_cond_stage_config:
-      target: ldm.modules.encoders.modules.FrozenDFN2BImageEmbedder
+      target: ldm.modules.encoders.modules.FrozenDINOv2ImageEmbedder

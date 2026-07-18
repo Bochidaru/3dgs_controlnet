@@ -22,6 +22,7 @@ sd_locked = True
 only_mid_control = False
 num_val_batches = 1
 image_logger_freq = 250
+max_ref = 16
 
 accumulate_grad_batches = 4             ## With 80gb vram, use bs=24, accu=4
 
@@ -35,8 +36,8 @@ persistent_workers = num_workers > 0
 
 
 checkpoint_callback = ModelCheckpoint(
-    dirpath="./weights",
-    filename="weights-{epoch:02d}-{step}",
+    dirpath="./checkpoints",
+    filename="control_sd15_3dgs_{epoch:02d}_{step}",
     save_top_k=-1,
     every_n_train_steps=1000,
     save_weights_only=False
@@ -50,12 +51,12 @@ model.sd_locked = sd_locked
 model.only_mid_control = only_mid_control
 
 # Misc
-dataset = MyDataset(isTest=False, use_cached_latent=use_cache_latent)
+dataset = MyDataset(isTest=False, use_cached_latent=use_cache_latent, max_ref=max_ref)
 dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True, 
                         num_workers=num_workers, pin_memory=pin_memory, 
                         persistent_workers=persistent_workers, prefetch_factor=prefetch_factor)
 
-val_dataset = MyDataset(isTest=True, use_cached_latent=True)
+val_dataset = MyDataset(isTest=True, use_cached_latent=True, max_ref=max_ref)
 val_batches = []
 g = torch.Generator()
 g.manual_seed(42)
@@ -66,7 +67,8 @@ for _ in range(num_val_batches):
 
 log_images_kwargs = {
     "sample": True,             ### Tắt CFG, vì text luôn empty
-    "unconditional_guidance_scale": 1.0   
+    "unconditional_guidance_scale": 1.0,
+    "N": 16   
 }
 logger = ImageLogger(batch_frequency=image_logger_freq, log_images_kwargs=log_images_kwargs, val_batch_cache=val_batches)
 trainer = pl.Trainer(accelerator="gpu", 

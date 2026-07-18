@@ -3,6 +3,8 @@ import cv2
 import numpy as np
 import os
 import torch
+import pickle
+import random
 
 from torch.utils.data import Dataset
 
@@ -48,36 +50,49 @@ def get_save_path(img_path):
 
 
 class MyDataset(Dataset):
-    def __init__(self, root_path="./cldm_dataset/" ,target_size=(512,512), isTest=False, use_cached_latent=False):
+    def __init__(self, max_ref, root_path="./cldm_dataset/" ,target_size=(512,512), 
+                 isTest=False, use_cached_latent=False, max_ref_vram_test=False):
+        assert isinstance(max_ref, int) and max_ref >= 2, \
+            f"max_ref must be int >= 2, but got {max_ref} ({type(max_ref)})"
+
         self.use_cached_latent = use_cached_latent
         self.cache_latent_root_path = "./cache_latent/" if self.use_cached_latent else None
         self.data = []
         self.root_path = root_path
         self.target_size = target_size
+        self.max_ref=max_ref
+        self.max_ref_vram_test=max_ref_vram_test
 
         poses_xyz_alldataset = []
         with open(f'{self.root_path}/dataset.jsonl', 'rt') as f:
             for line in f:
                 json_data = json.loads(line)
                 
-                for ref_key in ["ref1", "ref2"]:
-                    pose = np.array(json_data["ref"][ref_key]["pose_rel"], dtype=np.float32)
-                    json_data["ref"][ref_key]["pose_rel"] = pose  # reassign to np.array
-
+                ref_pose_bank_path = os.path.join(self.root_path, json_data["ref"]["ref_bank_path"])
+                with open(ref_pose_bank_path, "rb") as f:
+                    ref_bank = pickle.load(f)
+                
+                for pose in ref_bank.values():
                     poses_xyz_alldataset.append(pose[:3])
-
+                
                 if json_data["is_test"] != isTest:  # isTest = False -> Train dataset; isTest = True -> Test dataset
                     continue
+
+                if max_ref_vram_test:
+                    if len(ref_bank) >= max_ref:
+                        self.data.append(json_data)     ## test vram, chỉ thêm những scene nào có trained image nhiều hơn max_ref
+                    continue
+
                 self.data.append(json_data)
         
         poses_xyz_alldataset = np.stack(poses_xyz_alldataset)
-        self.mean_xyz = poses_xyz_alldataset.mean(axis=0)
-        self.std_xyz = poses_xyz_alldataset.std(axis=0)
+        self.mean_xyz = poses_xyz_alldataset.mean(axis=0).astype(np.float32)
+        self.std_xyz = poses_xyz_alldataset.std(axis=0).astype(np.float32)
         stats_xyz = {
             "mean": self.mean_xyz,
             "std": self.std_xyz
         }
-        np.save(f"{self.root_path}/pose_stats.npy", stats_xyz)  # Useful for inference
+        np.save(f"./models/pose_stats.npy", stats_xyz)  # Useful for inference
         # print("Mean x,y,z:", self.mean_xyz)
         # print("Std x,y,z:", self.std_xyz)
     
@@ -101,53 +116,112 @@ class MyDataset(Dataset):
 
         source_path = os.path.join(self.root_path, item['source'])  # Artifact image
         target_path = os.path.join(self.root_path, item['target'])  # Groundtruth image
-        ref1_path   = os.path.join(self.root_path, item["ref"]["ref1"]["path"])
-        ref2_path   = os.path.join(self.root_path, item["ref"]["ref2"]["path"])
-        
         prompt      = ""
-
-        ref1_pose   = self.normalize_pose(item["ref"]["ref1"]["pose_rel"])
-        ref2_pose   = self.normalize_pose(item["ref"]["ref2"]["pose_rel"])
+        scene_name  = item["dataset"] + "/" + item["scene_tag"]
 
         # Load
         source = cv2.imread(source_path)
         target = cv2.imread(target_path)
-        ref1   = cv2.imread(ref1_path)
-        ref2   = cv2.imread(ref2_path)
 
         # Do not forget that OpenCV read images in BGR order.
         source = cv2.cvtColor(source, cv2.COLOR_BGR2RGB)
         target = cv2.cvtColor(target, cv2.COLOR_BGR2RGB)
-        ref1   = cv2.cvtColor(ref1,   cv2.COLOR_BGR2RGB)
-        ref2   = cv2.cvtColor(ref2,   cv2.COLOR_BGR2RGB)
 
         # Resize
         source, source_pad_info = resize_and_pad_to_square(source, self.target_size)
         target, target_pad_info = resize_and_pad_to_square(target, self.target_size)
-        ref1, ref1_pad_info     = resize_and_pad_to_square(ref1,   self.target_size)
-        ref2, ref2_pad_info     = resize_and_pad_to_square(ref2,   self.target_size)
 
         # Normalize source and ref images to [0, 1].
         source = source.astype(np.float32) / 255.0
-        ref1   = ref1.astype(np.float32) / 255.0
-        ref2   = ref2.astype(np.float32) / 255.0
 
         # Normalize target images to [-1, 1].
         target = (target.astype(np.float32) / 127.5) - 1.0
 
-        result = dict(jpg=target, txt=prompt, hint=source,
-                      ref1=ref1, ref1_pose=ref1_pose,
-                      ref2=ref2, ref2_pose=ref2_pose,
-                      pad_info=source_pad_info)
+        # Load ref bank
+        ref_pose_bank_path = os.path.join(self.root_path, item["ref"]["ref_bank_path"])
+        with open(ref_pose_bank_path, "rb") as f:
+            ref_pose_bank = pickle.load(f)
+
+        trained_folder_path = os.path.join(self.root_path, "trained_image", item["dataset"], item["scene_tag"])
+        all_ref_names = sorted(os.listdir(trained_folder_path))
+
+        best_refs = [item["ref"]["ref1_name"] ,item["ref"]["ref2_name"]]
+
+        remaining_refs = [
+            x for x in all_ref_names
+            if x not in best_refs
+        ]
+
+        r = random.random()
+
+        if r < 0.7:
+            chosen_size = self.max_ref
+        elif r < 0.9:
+            chosen_size = max(2, self.max_ref - 2)
+        else:
+            chosen_size = max(2, self.max_ref - 4)
+
+        n_extra = min(self.max_ref - 2, len(remaining_refs))
+        n_extra = min(n_extra, chosen_size - 2)    # luôn chừa chỗ cho 2 best ref
+
+        selected_refs = (list(best_refs) + random.sample(remaining_refs, n_extra))
+
+        refs = []
+        ref_poses = []
+
+        for trained_image in selected_refs:
+            ref_path = os.path.join(trained_folder_path, trained_image)
+            ref_pose = self.normalize_pose(ref_pose_bank[trained_image])
+            ref      = cv2.imread(ref_path)
+            ref      = cv2.cvtColor(ref,   cv2.COLOR_BGR2RGB)
+            ref, _   = resize_and_pad_to_square(ref, self.target_size)
+            ref      = ref.astype(np.float32) / 255.0
+            refs.append(ref)
+            ref_poses.append(ref_pose)
+
+        while len(refs) < self.max_ref:
+            refs.append(np.zeros_like(refs[0]))
+            ref_poses.append(np.zeros_like(ref_poses[0]))
+        
+        refs = np.stack(refs)
+        ref_poses = np.stack(ref_poses)
+        
+        ref_masks = np.zeros(self.max_ref, dtype=bool)
+        ref_masks[:len(selected_refs)] = True
+
+        result = dict(groundtruth=target, txt=prompt, artifact=source,
+                      ref=refs, ref_pose=ref_poses, ref_mask=ref_masks,
+                      pad_info=source_pad_info, scene_name=scene_name)
         
         if self.use_cached_latent:
-            source_latent_path = get_save_path(self.cache_latent_root_path + os.path.normpath(source_path))
-            ref1_latent_path = get_save_path(self.cache_latent_root_path + os.path.normpath(ref1_path))
-            ref2_latent_path = get_save_path(self.cache_latent_root_path + os.path.normpath(ref2_path))
+            def img_to_cache_path(abs_img_path, prefix):
+                rel = os.path.relpath(abs_img_path, self.root_path)
+                dirname, fname = os.path.split(rel)
+                cache_fname = f"{prefix}_{os.path.splitext(fname)[0]}.pt"
+                return os.path.join(self.cache_latent_root_path, dirname, cache_fname)
 
-            result['z_control']   = torch.load(source_latent_path, map_location='cpu')
-            result['ref1_latent'] = torch.load(ref1_latent_path, map_location='cpu')
-            result['ref2_latent'] = torch.load(ref2_latent_path, map_location='cpu')
+            # Source + Target latent
+            result["z_artifact"] = torch.load(img_to_cache_path(source_path, "vae"), map_location="cpu")
+            result["z_target"]   = torch.load(img_to_cache_path(target_path, "vae"), map_location="cpu")
+
+            # Chỉ load VAE cho ref1 và ref2 (best_refs[0], best_refs[1])
+            ref_vaes = []
+            for ref_name in best_refs:  # luôn đúng 2 phần tử
+                ref_path = os.path.join(trained_folder_path, ref_name)
+                ref_vaes.append(torch.load(img_to_cache_path(ref_path, "vae"), map_location="cpu"))
+            result["ref_vae"] = torch.stack(ref_vaes)  # [2, 4, 64, 64]
+
+            # DINOv2 cho tất cả selected_refs, pad đến max_ref
+            ref_dinos = []
+            for trained_image in selected_refs:
+                ref_path = os.path.join(trained_folder_path, trained_image)
+                ref_dinos.append(torch.load(img_to_cache_path(ref_path, "dinov2"), map_location="cpu"))
+
+            while len(ref_dinos) < self.max_ref:
+                ref_dinos.append(torch.zeros_like(ref_dinos[0]))
+
+            result["use_cache"] = True
+            result["ref_dino"]  = torch.stack(ref_dinos)  # [max_ref, dim]
 
         return result
 

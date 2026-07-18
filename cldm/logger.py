@@ -6,6 +6,7 @@ import torchvision
 from PIL import Image
 from pytorch_lightning.callbacks import Callback
 from pytorch_lightning.utilities import rank_zero_only
+import json
 
 
 class ImageLogger(Callback):
@@ -33,6 +34,15 @@ class ImageLogger(Callback):
     def log_local(self, save_dir, split, images, global_step, current_epoch, batch_idx):
         root = os.path.join(save_dir, "image_log", split, f"step_{global_step:06}")
         for k in images:
+            if k == "scene_name":
+                scene_names = images[k]
+                filename = "{}_gs-{:06}_e-{:06}_b-{:06}.json".format(k, global_step, current_epoch, batch_idx)
+                path = os.path.join(root, filename)
+                os.makedirs(os.path.split(path)[0], exist_ok=True)
+                with open(path, "w", encoding="utf-8") as f:
+                    json.dump({"scene_names": list(scene_names)}, f, ensure_ascii=False, indent=2)
+                continue
+
             grid = torchvision.utils.make_grid(images[k], nrow=4)
             if self.rescale:
                 grid = (grid + 1.0) / 2.0  # -1,1 -> 0,1; c,h,w
