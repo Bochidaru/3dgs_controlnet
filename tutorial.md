@@ -4,6 +4,7 @@
 
 1. install env:
 - conda env update --file environment.yaml --prune         (for lightning ai)
+- conda env create -f environment.yaml
 
 2. get the dataset:
 - hf download minhphuong04/3dgs_cldm_dataset_and_weight cldm_dataset.zip --repo-type=dataset --local-dir . 
