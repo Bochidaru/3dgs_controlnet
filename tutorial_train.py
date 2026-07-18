@@ -3,7 +3,7 @@ from share import *
 import pytorch_lightning as pl
 import torch
 from torch.utils.data import DataLoader
-from temp_tutorial_dataset import MyDataset   ## !!!!!!!!!!!!!!! RM THIS WHEN DONE NEW DS
+from tutorial_dataset import MyDataset
 from cldm.logger import ImageLogger
 from cldm.model import create_model, load_state_dict
 import os
