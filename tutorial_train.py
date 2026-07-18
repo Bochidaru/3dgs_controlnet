@@ -12,25 +12,46 @@ import warnings
 warnings.filterwarnings("ignore", category=UserWarning)
 warnings.filterwarnings("ignore", category=FutureWarning)
 
+
+class LROverrideCallback(pl.Callback):
+    def __init__(self, new_lr: dict):
+        self.new_lr = new_lr
+
+    def on_train_start(self, trainer, pl_module):
+        opt = trainer.optimizers[0]
+        for group in opt.param_groups:
+            name = group.get("name", "")
+            if name in self.new_lr:
+                old = group["lr"]
+                group["lr"]         = self.new_lr[name]
+                group["initial_lr"] = self.new_lr[name]
+                print(f"[LROverride] group '{name}': {old:.2e} → {self.new_lr[name]:.2e}")
+
+
 # Configs
 resume_ckpt_path = ""                             ## For example: "./models/weights-epoch=30-step=2000.ckpt"
 pretrain_path = './models/control_sd15_ini.ckpt'
 pl.seed_everything(42, workers=True)
 use_cache_latent = True
 learning_rate = 1e-5
+learning_rate_for_new_module = 3e-5
 sd_locked = True
 only_mid_control = False
 num_val_batches = 1
-image_logger_freq = 250
+image_logger_freq = 500
 max_ref = 16
 
-accumulate_grad_batches = 4             ## With 80gb vram, use bs=24, accu=4
+# ── LR Override ── chỉnh tại đây khi resume mà muốn đổi lr thủ công
+lr_override_values = {
+    "pretrained": learning_rate,
+    "new":        learning_rate_for_new_module,
+}
 
+accumulate_grad_batches = 3            ## With 80gb vram, use bs=24, accu=4
 # DataLoader Config
-batch_size = 24
-
-num_workers = 6
-prefetch_factor = 2 if num_workers > 0 else None
+batch_size = 32
+num_workers = 8
+prefetch_factor = 4 if num_workers > 0 else None
 pin_memory = num_workers > 0
 persistent_workers = num_workers > 0
 
@@ -43,17 +64,17 @@ checkpoint_callback = ModelCheckpoint(
     save_weights_only=False
 )
 
-
 # First use cpu to load models. Pytorch Lightning will automatically move it to GPUs.
 model = create_model('./models/3dgs_cldm_v15.yaml').cpu()
 model.learning_rate = learning_rate
+model.learning_rate_for_new_module = learning_rate_for_new_module
 model.sd_locked = sd_locked
 model.only_mid_control = only_mid_control
 
 # Misc
 dataset = MyDataset(isTest=False, use_cached_latent=use_cache_latent, max_ref=max_ref)
-dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True, 
-                        num_workers=num_workers, pin_memory=pin_memory, 
+dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True,
+                        num_workers=num_workers, pin_memory=pin_memory,
                         persistent_workers=persistent_workers, prefetch_factor=prefetch_factor)
 
 val_dataset = MyDataset(isTest=True, use_cached_latent=True, max_ref=max_ref)
@@ -66,17 +87,20 @@ for _ in range(num_val_batches):
     val_batches.append(next(val_iter))
 
 log_images_kwargs = {
-    "sample": True,             ### Tắt CFG, vì text luôn empty
+    "sample": True,
     "unconditional_guidance_scale": 1.0,
-    "N": 16   
+    "N": 16
 }
-logger = ImageLogger(batch_frequency=image_logger_freq, log_images_kwargs=log_images_kwargs, val_batch_cache=val_batches)
-trainer = pl.Trainer(accelerator="gpu", 
-                     precision="bf16-mixed", 
-                     callbacks=[logger, checkpoint_callback],
-                     accumulate_grad_batches=accumulate_grad_batches, 
-                     max_steps=30000)
+logger = ImageLogger(max_images=16, batch_frequency=image_logger_freq,
+                     log_images_kwargs=log_images_kwargs, val_batch_cache=val_batches)
 
+callbacks = [logger, checkpoint_callback, LROverrideCallback(lr_override_values)]
+
+trainer = pl.Trainer(accelerator="gpu",
+                     precision="bf16-mixed",
+                     callbacks=callbacks,
+                     accumulate_grad_batches=accumulate_grad_batches,
+                     max_steps=100000)
 
 # Train!
 if resume_ckpt_path and os.path.exists(resume_ckpt_path):

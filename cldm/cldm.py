@@ -141,10 +141,6 @@ class ControlNet(nn.Module):
             linear(time_embed_dim, time_embed_dim),
         )
 
-        self.null_ref_sem = nn.Parameter(
-            torch.randn(1, 1, 257, context_dim) * 0.02
-        )
-
         self.input_blocks = nn.ModuleList(
             [
                 TimestepEmbedSequential(
@@ -177,14 +173,11 @@ class ControlNet(nn.Module):
         self.input_hint_block = TimestepEmbedSequential(
                 conv_nd(dims, in_channels, model_channels, 3, padding=1)
             )
-        
         self.art_ref_trans_block = SpatialTransformer(
                 model_channels, 8, model_channels//8, depth=transformer_depth, context_dim=context_dim,
                 disable_self_attn=False, use_linear=use_linear_in_transformer,
                 use_checkpoint=use_checkpoint
             )
-
-
         self.pose_emb = nn.Sequential(
             nn.Linear(9, 128),
             nn.SiLU(),
@@ -197,6 +190,10 @@ class ControlNet(nn.Module):
         self.hf_head = FiLMHead(pose_dim=pose_emb_dim, token_dim=context_dim)
         self.sem_head = FiLMHead(pose_dim=pose_emb_dim, token_dim=context_dim)
         self.ref_proj = nn.Linear(1024, context_dim)  # DINOv2 large cho hidden state dạng B, 257, 1024
+        self.null_ref_sem = nn.Parameter(
+            torch.randn(1, 1, 257, context_dim) * 0.02
+        )
+
         self.ref_latent_downsample = nn.AvgPool2d(kernel_size=2, stride=2)
 
         self._feature_size = model_channels
@@ -376,7 +373,7 @@ class ControlNet(nn.Module):
         emb = self.time_embed(t_emb)
         
         context_hf, context = self.embed_pose_into_ref(ref_latent[0], ref_latent[1],
-                                                       ref_tokens, ref_poses, ref_mask)
+                                                       ref_tokens[0], ref_poses[0], ref_mask[0])
 
         guided_hint = self.input_hint_block(hint, emb)   ## B,4,64,64 -> B,320,64,64   đưa lên 320 để match với h += guided_hint
         guided_hint = self.art_ref_trans_block(guided_hint, context_hf)
@@ -408,7 +405,7 @@ class ControlLDM(LatentDiffusion):
         self.control_key = control_key
         self.only_mid_control = only_mid_control
         self.control_scales = [1.0] * 13
-        self.instantiate_ref_cond_stage(ref_cond_stage_config)
+        self.ref_cond_stage_config = ref_cond_stage_config
 
     def instantiate_ref_cond_stage(self, config):
         model = instantiate_from_config(config)
@@ -430,7 +427,7 @@ class ControlLDM(LatentDiffusion):
             ref_pose = ref_pose[:bs]
             ref_masks = ref_masks[:bs]
 
-        if batch["use_cache"]:
+        if "use_cache" in batch:
             # Dùng cache
             z_control   = batch["z_artifact"].to(self.device)   # B, 4, 64, 64
             x    = batch["z_target"].to(self.device)      # B, 4, 64, 64
@@ -451,6 +448,8 @@ class ControlLDM(LatentDiffusion):
                 refs_tokens = refs_tokens[:bs]
 
         else:
+            if not self.ref_cond_stage_model:
+                self.instantiate_ref_cond_stage(self.ref_cond_stage_config)
             x, c = super().get_input(batch, self.first_stage_key, *args, **kwargs)
             # Encode online
             control = batch[self.control_key]
@@ -535,7 +534,10 @@ class ControlLDM(LatentDiffusion):
 
         c_cat, c = c_orig["c_concat"][0][:N], c_orig["c_crossattn"][0][:N]  ## This c var is text emb
 
-        c_ref_latent = c_orig["c_ref_latent"][:N]
+        c_ref_latent = [
+            c_orig["c_ref_latent"][0][:N],
+            c_orig["c_ref_latent"][1][:N],
+        ]
         c_ref_token = c_orig["c_ref_token"][:N]
         c_ref_pose = c_orig["c_ref_pose"][:N]
         c_ref_mask = c_orig["c_ref_mask"][:N]
@@ -572,10 +574,10 @@ class ControlLDM(LatentDiffusion):
 
             # get denoise row
             samples, z_denoise_row = self.sample_log(cond={"c_concat": [c_cat], "c_crossattn": [c],
-                                                            "c_ref_latent": [c_ref_latent],
-                                                            "c_ref_token": [c_ref_token],
-                                                            "c_ref_pose": [c_ref_pose],
-                                                            "c_ref_mask": [c_ref_mask]},
+                                                            "c_ref_latent": [c_ref_latent[0], c_ref_latent[1]],
+                                                            "c_ref_token": c_ref_token,
+                                                            "c_ref_pose": c_ref_pose,
+                                                            "c_ref_mask": c_ref_mask},
                                                      batch_size=N, ddim=use_ddim,
                                                      ddim_steps=ddim_steps, eta=ddim_eta)
             x_samples = self.decode_first_stage(samples)
@@ -589,10 +591,10 @@ class ControlLDM(LatentDiffusion):
             uc_cat = c_cat  # torch.zeros_like(c_cat)
             uc_full = {"c_concat": [uc_cat], "c_crossattn": [uc_cross]}
             samples_cfg, _ = self.sample_log(cond={"c_concat": [c_cat], "c_crossattn": [c],
-                                                            "c_ref_latent": [c_ref_latent],
-                                                            "c_ref_token": [c_ref_token],
-                                                            "c_ref_pose": [c_ref_pose],
-                                                            "c_ref_mask": [c_ref_mask]},
+                                                            "c_ref_latent": [c_ref_latent[0], c_ref_latent[1]],
+                                                            "c_ref_token": c_ref_token,
+                                                            "c_ref_pose": c_ref_pose,
+                                                            "c_ref_mask": c_ref_mask},
                                              batch_size=N, ddim=use_ddim,
                                              ddim_steps=ddim_steps, eta=ddim_eta,
                                              unconditional_guidance_scale=unconditional_guidance_scale,
@@ -611,14 +613,78 @@ class ControlLDM(LatentDiffusion):
         samples, intermediates = ddim_sampler.sample(ddim_steps, batch_size, shape, cond, verbose=False, **kwargs)
         return samples, intermediates
 
+    # def configure_optimizers(self):
+    #     lr = self.learning_rate
+    #     params = list(self.control_model.parameters())
+    #     if not self.sd_locked:
+    #         params += list(self.model.diffusion_model.output_blocks.parameters())
+    #         params += list(self.model.diffusion_model.out.parameters())
+    #     opt = torch.optim.AdamW(params, lr=lr)
+    #     return opt
+
     def configure_optimizers(self):
-        lr = self.learning_rate
-        params = list(self.control_model.parameters())
+        lr_base = self.learning_rate
+        lr_new  = self.learning_rate_for_new_module
+
+        new_module_names = {
+            "ref_proj", "ref_latent_proj",
+            "pose_emb", "hf_head", "sem_head",
+            "art_ref_trans_block", "input_hint_block",
+            "null_ref_sem",
+        }
+
+        base_params = []
+        new_params  = []
+
+        for name, param in self.control_model.named_parameters():
+            if not param.requires_grad:
+                continue
+            top_module = name.split(".")[0]
+            if top_module in new_module_names:
+                new_params.append(param)
+            else:
+                base_params.append(param)
+
+        total_assigned  = len(base_params) + len(new_params)
+        total_trainable = sum(1 for p in self.control_model.parameters() if p.requires_grad)
+        assert total_assigned == total_trainable, \
+            f"Bỏ sót param: assigned={total_assigned}, trainable={total_trainable}"
+
         if not self.sd_locked:
-            params += list(self.model.diffusion_model.output_blocks.parameters())
-            params += list(self.model.diffusion_model.out.parameters())
-        opt = torch.optim.AdamW(params, lr=lr)
-        return opt
+            unet_out = (
+                list(self.model.diffusion_model.output_blocks.parameters())
+                + list(self.model.diffusion_model.out.parameters())
+            )
+            base_params += unet_out
+
+        opt = torch.optim.AdamW([
+            {"params": base_params, "lr": lr_base, "name": "pretrained"},
+            {"params": new_params,  "lr": lr_new,     "name": "new"},
+        ], lr=lr_base)
+
+        warmup_steps = 1000
+
+        def new_lr_lambda(step):
+            if step < warmup_steps:
+                return (step + 1) / warmup_steps
+            return 1.0
+
+        def base_lr_lambda(step):
+            return 1.0   # không warmup, giữ nguyên lr_base
+
+        scheduler = torch.optim.lr_scheduler.LambdaLR(opt, lr_lambda=[
+            base_lr_lambda,   # group 0: pretrained
+            new_lr_lambda,    # group 1: new
+        ])
+
+        return {
+            "optimizer": opt,
+            "lr_scheduler": {
+                "scheduler": scheduler,
+                "interval": "step",
+                "frequency": 1,
+            }
+        }
 
     def low_vram_shift(self, is_diffusing):
         if is_diffusing:

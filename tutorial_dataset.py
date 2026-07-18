@@ -60,8 +60,9 @@ class MyDataset(Dataset):
         self.data = []
         self.root_path = root_path
         self.target_size = target_size
-        self.max_ref=max_ref
-        self.max_ref_vram_test=max_ref_vram_test
+        self.max_ref = max_ref
+        self.max_ref_vram_test = max_ref_vram_test
+        self.isTest = isTest
 
         poses_xyz_alldataset = []
         with open(f'{self.root_path}/dataset.jsonl', 'rt') as f:
@@ -152,19 +153,33 @@ class MyDataset(Dataset):
             if x not in best_refs
         ]
 
-        r = random.random()
+        if self.isTest:
+            n_extra = min(self.max_ref - 2, len(remaining_refs))
 
-        if r < 0.7:
-            chosen_size = self.max_ref
-        elif r < 0.9:
-            chosen_size = max(2, self.max_ref - 2)
+            if n_extra > 0:
+                indices = np.round(
+                    np.linspace(0, len(remaining_refs) - 1, n_extra)
+                ).astype(int)
+                sampled_refs = [remaining_refs[i] for i in indices]
+            else:
+                sampled_refs = []
+
+            selected_refs = list(best_refs) + sampled_refs
+
         else:
-            chosen_size = max(2, self.max_ref - 4)
+            r = random.random()
+            chosen_size = (
+                self.max_ref if r < 0.7
+                else max(2, self.max_ref - 2) if r < 0.9
+                else max(2, self.max_ref - 4)
+            )
+            n_extra = min(self.max_ref - 2, len(remaining_refs))
+            n_extra = min(n_extra, chosen_size - 2)
 
-        n_extra = min(self.max_ref - 2, len(remaining_refs))
-        n_extra = min(n_extra, chosen_size - 2)    # luôn chừa chỗ cho 2 best ref
-
-        selected_refs = (list(best_refs) + random.sample(remaining_refs, n_extra))
+            selected_refs = (
+                list(best_refs)
+                + random.sample(remaining_refs, n_extra)
+            )
 
         refs = []
         ref_poses = []
