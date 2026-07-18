@@ -119,7 +119,7 @@ def precompute_latents(root_path, new_root_path, model, model_dinov2,
 if __name__ == '__main__':
     # Load model trước
     config = OmegaConf.load('models/3dgs_cldm_v15.yaml')
-    model = instantiate_from_config(config).to('cuda')
+    model = instantiate_from_config(config.model).to('cuda')
     ckpt = torch.load('models/control_sd15_ini.ckpt', map_location='cpu')
     state_dict = ckpt.get('state_dict', ckpt)
     model.load_state_dict(state_dict, strict=False)
