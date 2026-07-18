@@ -141,6 +141,10 @@ class ControlNet(nn.Module):
             linear(time_embed_dim, time_embed_dim),
         )
 
+        self.null_ref_sem = nn.Parameter(
+            torch.randn(1, 1, 257, context_dim) * 0.02
+        )
+
         self.input_blocks = nn.ModuleList(
             [
                 TimestepEmbedSequential(
@@ -342,33 +346,36 @@ class ControlNet(nn.Module):
         ref_hf = torch.cat([ref1_hf, ref2_hf], dim=1)  # B, 2048, 768
 
         # --- ref_sem: CLIP token, semantic ---
-        pose_embedded = self.pose_emb(ref_poses) # [B,N,64]
-        gamma_sem, beta_sem = self.sem_head(pose_embedded)  # [B,N,768]
-
-        gamma_sem = gamma_sem.unsqueeze(2)
-        beta_sem = beta_sem.unsqueeze(2) # [B,N,1,768]
+        B, N, T, _ = ref_tokens.shape
 
         ref_tokens = self.ref_proj(ref_tokens)  # [B,N,257,768]
 
-        ref_sem = ref_tokens * (1 + gamma_sem) + beta_sem   # [B,N,257,768]
-        
-        ref_mask = ref_mask.to(ref_sem.dtype)   # B, N
-        ref_sem = ref_sem * ref_mask[..., None, None]
+        pose_embedded = self.pose_emb(ref_poses)      # [B,N,64]
+        gamma_sem, beta_sem = self.sem_head(pose_embedded)
 
-        B, N, T, C = ref_sem.shape
+        gamma_sem = gamma_sem.unsqueeze(2)            # [B,N,1,768]
+        beta_sem  = beta_sem.unsqueeze(2)
 
-        ref_sem = ref_sem.reshape(B, N * T, C)  # [B, N*257, 768]
+        ref_sem_valid = ref_tokens * (1 + gamma_sem) + beta_sem
 
-        ref_attn_mask = ref_mask.repeat_interleave(T, dim=1)
+        null_ref = self.null_ref_sem.expand(B, N, T, -1)
 
-        return ref_hf, ref_sem, ref_attn_mask
+        ref_sem = torch.where(
+            ref_mask[..., None, None],
+            ref_sem_valid,
+            null_ref
+        )
+
+        ref_sem = ref_sem.reshape(B, N * T, ref_sem.shape[-1])
+
+        return ref_hf, ref_sem
     
 
     def forward(self, x, hint, timesteps, ref_latent, ref_tokens, ref_poses, ref_mask, **kwargs):
         t_emb = timestep_embedding(timesteps, self.model_channels, repeat_only=False)
         emb = self.time_embed(t_emb)
         
-        context_hf, context, ref_attn_mask = self.embed_pose_into_ref(ref_latent[0], ref_latent[1],
+        context_hf, context = self.embed_pose_into_ref(ref_latent[0], ref_latent[1],
                                                        ref_tokens, ref_poses, ref_mask)
 
         guided_hint = self.input_hint_block(hint, emb)   ## B,4,64,64 -> B,320,64,64   đưa lên 320 để match với h += guided_hint
@@ -379,15 +386,15 @@ class ControlNet(nn.Module):
         h = x.type(self.dtype)
         for module, zero_conv in zip(self.input_blocks, self.zero_convs):
             if guided_hint is not None:
-                h = module(h, emb, context, ref_attn_mask)
+                h = module(h, emb, context)
                 h += guided_hint
                 guided_hint = None
             else:
-                h = module(h, emb, context, ref_attn_mask)
-            outs.append(zero_conv(h, emb, context, ref_attn_mask))
+                h = module(h, emb, context)
+            outs.append(zero_conv(h, emb, context))
 
-        h = self.middle_block(h, emb, context, ref_attn_mask)
-        outs.append(self.middle_block_out(h, emb, context, ref_attn_mask))
+        h = self.middle_block(h, emb, context)
+        outs.append(self.middle_block_out(h, emb, context))
 
         return outs
 

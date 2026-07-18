@@ -261,15 +261,57 @@ class MemoryEfficientCrossAttention(nn.Module):
         return self.to_out(out)
 
 
+class MemoryEfficientCrossAttentionSDPA(nn.Module):
+    def __init__(self, query_dim, context_dim=None, heads=8, dim_head=64, dropout=0.0):
+        super().__init__()
+        print(f"Setting up {self.__class__.__name__}. Query dim is {query_dim}, context_dim is {context_dim} and using "
+              f"{heads} heads.")
+        inner_dim = dim_head * heads
+        context_dim = default(context_dim, query_dim)
+
+        self.heads = heads
+        self.dim_head = dim_head
+
+        self.to_q = nn.Linear(query_dim, inner_dim, bias=False)
+        self.to_k = nn.Linear(context_dim, inner_dim, bias=False)
+        self.to_v = nn.Linear(context_dim, inner_dim, bias=False)
+
+        self.to_out = nn.Sequential(nn.Linear(inner_dim, query_dim), nn.Dropout(dropout))
+
+    def forward(self, x, context=None, mask=None):
+        q = self.to_q(x)
+        context = default(context, x)
+        k = self.to_k(context)
+        v = self.to_v(context)
+
+        b, _, _ = q.shape
+
+        # Reshape: (B, N, h*d) -> (B, h, N, d)
+        q = q.reshape(b, q.shape[1], self.heads, self.dim_head).permute(0, 2, 1, 3)
+        k = k.reshape(b, k.shape[1], self.heads, self.dim_head).permute(0, 2, 1, 3)
+        v = v.reshape(b, v.shape[1], self.heads, self.dim_head).permute(0, 2, 1, 3)
+
+        # SDPA - tự động chọn Flash Attention kernel tốt nhất
+        out = F.scaled_dot_product_attention(
+            q, k, v,
+            dropout_p=0.0,
+        )
+
+        # Reshape về: (B, N, h*d)
+        out = out.permute(0, 2, 1, 3).reshape(b, out.shape[2], self.heads * self.dim_head)
+        return self.to_out(out)
+
+
 class BasicTransformerBlock(nn.Module):
     ATTENTION_MODES = {
         "softmax": CrossAttention,  # vanilla attention
-        "softmax-xformers": MemoryEfficientCrossAttention
+        "softmax-xformers": MemoryEfficientCrossAttention,
+        "softmax-sdpa": MemoryEfficientCrossAttentionSDPA,
     }
     def __init__(self, dim, n_heads, d_head, dropout=0., context_dim=None, gated_ff=True, checkpoint=True,
                  disable_self_attn=False):
         super().__init__()
-        attn_mode = "softmax-xformers" if XFORMERS_IS_AVAILBLE else "softmax"
+        attn_mode = "softmax-xformers" if XFORMERS_IS_AVAILBLE else "softmax-sdpa"
         assert attn_mode in self.ATTENTION_MODES
         attn_cls = self.ATTENTION_MODES[attn_mode]
         self.disable_self_attn = disable_self_attn
