@@ -50,7 +50,7 @@ lr_override_values = {
 accumulate_grad_batches = 1
 # DataLoader Config
 batch_size = 128
-num_workers = 16
+num_workers = 8
 prefetch_factor = 4 if num_workers > 0 else None
 pin_memory = num_workers > 0
 persistent_workers = num_workers > 0
@@ -79,7 +79,7 @@ dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True,
 
 val_dataset = MyDataset(isTest=True, use_cached_latent=True)
 val_batches = []
-val_bs = 36
+val_bs = 25
 g = torch.Generator()
 g.manual_seed(42)
 val_dataloader = DataLoader(val_dataset, batch_size=val_bs, shuffle=True, generator=g)
