@@ -34,23 +34,23 @@ pretrain_path = './models/control_sd15_ini.ckpt'
 pl.seed_everything(42, workers=True)
 use_cache_latent = True
 learning_rate = 1e-5
-learning_rate_for_new_module = 3e-5
+learning_rate_for_new_module = 2e-5
 sd_locked = True
 only_mid_control = False
 num_val_batches = 1
 image_logger_freq = 500
-max_ref = 16
 
-# ── LR Override ── chỉnh tại đây khi resume mà muốn đổi lr thủ công
+
 lr_override_values = {
     "pretrained": learning_rate,
     "new":        learning_rate_for_new_module,
 }
 
-accumulate_grad_batches = 3            ## With 80gb vram, use bs=24, accu=4
+
+accumulate_grad_batches = 1
 # DataLoader Config
-batch_size = 56
-num_workers = 8
+batch_size = 128
+num_workers = 16
 prefetch_factor = 4 if num_workers > 0 else None
 pin_memory = num_workers > 0
 persistent_workers = num_workers > 0
@@ -72,16 +72,17 @@ model.sd_locked = sd_locked
 model.only_mid_control = only_mid_control
 
 # Misc
-dataset = MyDataset(isTest=False, use_cached_latent=use_cache_latent, max_ref=max_ref)
+dataset = MyDataset(isTest=False, use_cached_latent=use_cache_latent)
 dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True,
                         num_workers=num_workers, pin_memory=pin_memory,
                         persistent_workers=persistent_workers, prefetch_factor=prefetch_factor)
 
-val_dataset = MyDataset(isTest=True, use_cached_latent=True, max_ref=max_ref)
+val_dataset = MyDataset(isTest=True, use_cached_latent=True)
 val_batches = []
+val_bs = 16
 g = torch.Generator()
 g.manual_seed(42)
-val_dataloader = DataLoader(val_dataset, batch_size=batch_size, shuffle=True, generator=g)
+val_dataloader = DataLoader(val_dataset, batch_size=val_bs, shuffle=True, generator=g)
 val_iter = iter(val_dataloader)
 for _ in range(num_val_batches):
     val_batches.append(next(val_iter))
@@ -89,9 +90,9 @@ for _ in range(num_val_batches):
 log_images_kwargs = {
     "sample": True,
     "unconditional_guidance_scale": 1.0,
-    "N": 16
+    "N": val_bs
 }
-logger = ImageLogger(max_images=16, batch_frequency=image_logger_freq,
+logger = ImageLogger(max_images=val_bs, batch_frequency=image_logger_freq,
                      log_images_kwargs=log_images_kwargs, val_batch_cache=val_batches)
 
 callbacks = [logger, checkpoint_callback, LROverrideCallback(lr_override_values)]

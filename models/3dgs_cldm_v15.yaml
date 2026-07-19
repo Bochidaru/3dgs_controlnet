@@ -79,5 +79,5 @@ model:
     cond_stage_config:
       target: ldm.modules.encoders.modules.FrozenCLIPEmbedder
 
-    ref_cond_stage_config:
-      target: ldm.modules.encoders.modules.FrozenDINOv2ImageEmbedder
+    # ref_cond_stage_config:
+    #   target: ldm.modules.encoders.modules.FrozenDINOv2ImageEmbedder

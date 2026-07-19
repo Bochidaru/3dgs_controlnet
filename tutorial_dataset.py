@@ -50,18 +50,13 @@ def get_save_path(img_path):
 
 
 class MyDataset(Dataset):
-    def __init__(self, max_ref, root_path="./cldm_dataset/" ,target_size=(512,512), 
-                 isTest=False, use_cached_latent=False, max_ref_vram_test=False):
-        assert isinstance(max_ref, int) and max_ref >= 2, \
-            f"max_ref must be int >= 2, but got {max_ref} ({type(max_ref)})"
-
+    def __init__(self, root_path="./cldm_dataset/" ,target_size=(512,512), 
+                 isTest=False, use_cached_latent=False):
         self.use_cached_latent = use_cached_latent
         self.cache_latent_root_path = "./cache_cldm_dataset/" if self.use_cached_latent else None
         self.data = []
         self.root_path = root_path
         self.target_size = target_size
-        self.max_ref = max_ref
-        self.max_ref_vram_test = max_ref_vram_test
         self.isTest = isTest
 
         poses_xyz_alldataset = []
@@ -79,11 +74,6 @@ class MyDataset(Dataset):
                 if json_data["is_test"] != isTest:  # isTest = False -> Train dataset; isTest = True -> Test dataset
                     continue
 
-                if max_ref_vram_test:
-                    if len(ref_bank) >= max_ref:
-                        self.data.append(json_data)     ## test vram, chỉ thêm những scene nào có trained image nhiều hơn max_ref
-                    continue
-
                 self.data.append(json_data)
         
         poses_xyz_alldataset = np.stack(poses_xyz_alldataset)
@@ -94,8 +84,6 @@ class MyDataset(Dataset):
             "std": self.std_xyz
         }
         np.save(f"./models/pose_stats.npy", stats_xyz)  # Useful for inference
-        # print("Mean x,y,z:", self.mean_xyz)
-        # print("Std x,y,z:", self.std_xyz)
     
 
     def __len__(self):
@@ -115,120 +103,70 @@ class MyDataset(Dataset):
     def __getitem__(self, idx):
         item = self.data[idx]
 
-        source_path = os.path.join(self.root_path, item['source'])  # Artifact image
-        target_path = os.path.join(self.root_path, item['target'])  # Groundtruth image
-        prompt      = ""
+        source_path = os.path.join(self.root_path, item['source'])
+        target_path = os.path.join(self.root_path, item['target'])
+
         ref1_name = item["ref"]["ref1_name"]
         ref2_name = item["ref"]["ref2_name"]
-        scene_name  = item["dataset"] + "/" + item["scene_tag"] + "/" + item["image_name"] + "_" + f"ref1_{ref1_name}" + "_" + f"ref2_{ref2_name}"
+        scene_name = (item["dataset"] + "/" + item["scene_tag"] + "/" 
+                      + item["image_name"] + "_" 
+                      + f"ref1_{ref1_name}_ref2_{ref2_name}")
 
         # Load ref bank
         ref_pose_bank_path = os.path.join(self.root_path, item["ref"]["ref_bank_path"])
         with open(ref_pose_bank_path, "rb") as f:
             ref_pose_bank = pickle.load(f)
 
-        trained_folder_path = os.path.join(self.root_path, "trained_image", item["dataset"], item["scene_tag"])
-        all_ref_names = sorted(os.listdir(trained_folder_path))
+        trained_folder_path = os.path.join(
+            self.root_path, "trained_image", item["dataset"], item["scene_tag"]
+        )
 
-        best_refs = [item["ref"]["ref1_name"] ,item["ref"]["ref2_name"]]
+        # Pose
+        ref1_pose = self.normalize_pose(ref_pose_bank[ref1_name])  # [9]
+        ref2_pose = self.normalize_pose(ref_pose_bank[ref2_name])  # [9]
 
-        remaining_refs = [
-            x for x in all_ref_names
-            if x not in best_refs
-        ]
+        result = dict(
+            txt        = "",
+            ref1_pose  = ref1_pose,
+            ref2_pose  = ref2_pose,
+            scene_name = scene_name,
+        )
 
-        if self.isTest:
-            n_extra = min(self.max_ref - 2, len(remaining_refs))
-
-            if n_extra > 0:
-                indices = np.round(
-                    np.linspace(0, len(remaining_refs) - 1, n_extra)
-                ).astype(int)
-                sampled_refs = [remaining_refs[i] for i in indices]
-            else:
-                sampled_refs = []
-
-            selected_refs = list(best_refs) + sampled_refs
-
-        else:
-            r = random.random()
-            chosen_size = (
-                self.max_ref if r < 0.7
-                else max(2, self.max_ref - 2) if r < 0.9
-                else max(2, self.max_ref - 4)
-            )
-            n_extra = min(self.max_ref - 2, len(remaining_refs))
-            n_extra = min(n_extra, chosen_size - 2)
-
-            selected_refs = (
-                list(best_refs)
-                + random.sample(remaining_refs, n_extra)
-            )
-
-        # Pose luôn cần cho cả 2 mode (cache/non-cache)
-        ref_poses = [self.normalize_pose(ref_pose_bank[name]) for name in selected_refs]
-        while len(ref_poses) < self.max_ref:
-            ref_poses.append(np.zeros_like(ref_poses[0]))
-        ref_poses = np.stack(ref_poses)
-
-        ref_masks = np.zeros(self.max_ref, dtype=bool)
-        ref_masks[:len(selected_refs)] = True
-
-        result = dict(txt=prompt, ref_pose=ref_poses, ref_mask=ref_masks,
-                      scene_name=scene_name)
-        
         if self.use_cached_latent:
             def img_to_cache_path(abs_img_path, prefix):
-                rel = os.path.relpath(abs_img_path, self.root_path)
+                rel        = os.path.relpath(abs_img_path, self.root_path)
                 dirname, fname = os.path.split(rel)
                 cache_fname = f"{prefix}_{os.path.splitext(fname)[0]}.pt"
                 return os.path.join(self.cache_latent_root_path, dirname, cache_fname)
 
-            # Source + Target latent
-            result["z_artifact"] = torch.load(img_to_cache_path(source_path, "vae"), map_location="cpu")
-            result["z_target"]   = torch.load(img_to_cache_path(target_path, "vae"), map_location="cpu")
+            ref1_path = os.path.join(trained_folder_path, ref1_name)
+            ref2_path = os.path.join(trained_folder_path, ref2_name)
 
-            # Chỉ load VAE cho ref1 và ref2 (best_refs[0], best_refs[1])
-            ref_vaes = []
-            for ref_name in best_refs:  # luôn đúng 2 phần tử
-                ref_path = os.path.join(trained_folder_path, ref_name)
-                ref_vaes.append(torch.load(img_to_cache_path(ref_path, "vae"), map_location="cpu"))
-            result["ref_vae"] = torch.stack(ref_vaes)  # [2, 4, 64, 64]
-
-            # DINOv2 cho tất cả selected_refs, pad đến max_ref
-            ref_dinos = []
-            for trained_image in selected_refs:
-                ref_path = os.path.join(trained_folder_path, trained_image)
-                ref_dinos.append(torch.load(img_to_cache_path(ref_path, "dinov2"), map_location="cpu"))
-
-            while len(ref_dinos) < self.max_ref:
-                ref_dinos.append(torch.zeros_like(ref_dinos[0]))
-
-            result["use_cache"] = True
-            result["ref_dino"]  = torch.stack(ref_dinos)  # [max_ref, dim]
+            result["use_cache"]   = True
+            result["z_artifact"]  = torch.load(img_to_cache_path(source_path, "vae"), map_location="cpu")
+            result["z_target"]    = torch.load(img_to_cache_path(target_path, "vae"), map_location="cpu")
+            result["z_ref1"]      = torch.load(img_to_cache_path(ref1_path,   "vae"), map_location="cpu")
+            result["z_ref2"]      = torch.load(img_to_cache_path(ref2_path,   "vae"), map_location="cpu")
 
         else:
-            # Non-cache: cần ảnh raw để encode online
+            ref1_path = os.path.join(trained_folder_path, ref1_name)
+            ref2_path = os.path.join(trained_folder_path, ref2_name)
+
             source = cv2.cvtColor(cv2.imread(source_path), cv2.COLOR_BGR2RGB)
             target = cv2.cvtColor(cv2.imread(target_path), cv2.COLOR_BGR2RGB)
+            ref1   = cv2.cvtColor(cv2.imread(ref1_path),   cv2.COLOR_BGR2RGB)
+            ref2   = cv2.cvtColor(cv2.imread(ref2_path),   cv2.COLOR_BGR2RGB)
+
             source, source_pad_info = resize_and_pad_to_square(source, self.target_size)
-            target, _ = resize_and_pad_to_square(target, self.target_size)
+            target, _               = resize_and_pad_to_square(target, self.target_size)
+            ref1,   _               = resize_and_pad_to_square(ref1,   self.target_size)
+            ref2,   _               = resize_and_pad_to_square(ref2,   self.target_size)
 
-            source = source.astype(np.float32) / 255.0            # [0, 1]
-            target = (target.astype(np.float32) / 127.5) - 1.0    # [-1, 1]
-
-            refs = []
-            for trained_image in selected_refs:
-                ref_path = os.path.join(trained_folder_path, trained_image)
-                ref      = cv2.cvtColor(cv2.imread(ref_path), cv2.COLOR_BGR2RGB)
-                ref, _   = resize_and_pad_to_square(ref, self.target_size)
-                refs.append(ref.astype(np.float32) / 255.0)
-            while len(refs) < self.max_ref:
-                refs.append(np.zeros_like(refs[0]))
-
-            result["groundtruth"] = target
-            result["artifact"]    = source
-            result["ref"]         = np.stack(refs)
+            result["use_cache"]   = False
+            result["groundtruth"] = (target.astype(np.float32) / 127.5) - 1.0   # [-1, 1]
+            result["artifact"]    = (source.astype(np.float32) / 127.5) - 1.0
+            result["ref1"]        = (ref1.astype(np.float32) / 127.5) - 1.0
+            result["ref2"]        = (ref2.astype(np.float32) / 127.5) - 1.0
             result["pad_info"]    = source_pad_info
 
         return result
