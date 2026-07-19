@@ -79,7 +79,7 @@ dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True,
 
 val_dataset = MyDataset(isTest=True, use_cached_latent=True)
 val_batches = []
-val_bs = 16
+val_bs = 64
 g = torch.Generator()
 g.manual_seed(42)
 val_dataloader = DataLoader(val_dataset, batch_size=val_bs, shuffle=True, generator=g)
