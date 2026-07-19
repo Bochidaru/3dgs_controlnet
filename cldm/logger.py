@@ -43,7 +43,9 @@ class ImageLogger(Callback):
                     json.dump({"scene_names": list(scene_names)}, f, ensure_ascii=False, indent=2)
                 continue
 
-            grid = torchvision.utils.make_grid(images[k], nrow=4)
+            n = images[k].shape[0]
+            nrow = int(n ** 0.5)  # sqrt → layout vuông nhất có thể
+            grid = torchvision.utils.make_grid(images[k], nrow=nrow)
             if self.rescale:
                 grid = (grid + 1.0) / 2.0  # -1,1 -> 0,1; c,h,w
             grid = grid.transpose(0, 1).transpose(1, 2).squeeze(-1)
