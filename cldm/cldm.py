@@ -353,7 +353,7 @@ class ControlNet(nn.Module):
         gamma_sem = gamma_sem.unsqueeze(2)            # [B,N,1,768]
         beta_sem  = beta_sem.unsqueeze(2)
 
-        ref_sem_valid = ref_tokens * (1 + gamma_sem) + beta_sem
+        ref_sem_valid = ref_tokens * (1 + gamma_sem) + beta_sem   # [B,N,257,768]
 
         null_ref = self.null_ref_sem.expand(B, N, T, -1)
 
@@ -363,7 +363,7 @@ class ControlNet(nn.Module):
             null_ref
         )
 
-        ref_sem = ref_sem.reshape(B, N * T, ref_sem.shape[-1])
+        ref_sem = ref_sem.reshape(B, N * T, ref_sem.shape[-1])     # [B,N*257,768]
 
         return ref_hf, ref_sem
     
@@ -494,6 +494,12 @@ class ControlLDM(LatentDiffusion):
                 refs_tokens.shape[2]
             )
 
+            pad_mask = ~ref_masks  # B, N, True = pad
+            refs_tokens = refs_tokens.masked_fill(
+                pad_mask.unsqueeze(-1).unsqueeze(-1),  # B, N, 1, 1
+                0.0
+            )      ## sau khi đi qua dinov2, thì các ảnh pad lúc này sẽ có giá trị token !=0 do chuẩn hóa
+
         return x, dict(c_crossattn=[c], c_concat=[z_control],
                     c_ref_latent=[ref1_latent, ref2_latent],
                     c_ref_pose=[ref_pose],
@@ -534,6 +540,7 @@ class ControlLDM(LatentDiffusion):
 
         c_cat, c = c_orig["c_concat"][0][:N], c_orig["c_crossattn"][0][:N]  ## This c var is text emb
 
+
         c_ref_latent = [
             c_orig["c_ref_latent"][0][:N],
             c_orig["c_ref_latent"][1][:N],
@@ -545,11 +552,7 @@ class ControlLDM(LatentDiffusion):
         N = min(z.shape[0], N)
         n_row = min(z.shape[0], n_row)
         log["ground_truth"] = self.decode_first_stage(z)
-        control_batch = batch[self.control_key][:N].permute(0, 3, 1, 2)
-        log["control"] = control_batch * 2.0 - 1.0
-        ref1_batch, ref2_batch = batch["ref"][:, 0][:N].permute(0, 3, 1, 2), batch["ref"][:, 1][:N].permute(0, 3, 1, 2)  ## logger require CHW
-        log["ref1"] = ref1_batch * 2.0 - 1.0
-        log["ref2"] = ref2_batch * 2.0 - 1.0
+        log["control"] = self.decode_first_stage(c_cat)   # = decode(z_artifact); ref1/ref2 đã nằm trong scene_name
         log["scene_name"] = batch["scene_name"]
 
         if plot_diffusion_rows:

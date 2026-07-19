@@ -118,25 +118,9 @@ class MyDataset(Dataset):
         source_path = os.path.join(self.root_path, item['source'])  # Artifact image
         target_path = os.path.join(self.root_path, item['target'])  # Groundtruth image
         prompt      = ""
-        scene_name  = item["dataset"] + "/" + item["scene_tag"]
-
-        # Load
-        source = cv2.imread(source_path)
-        target = cv2.imread(target_path)
-
-        # Do not forget that OpenCV read images in BGR order.
-        source = cv2.cvtColor(source, cv2.COLOR_BGR2RGB)
-        target = cv2.cvtColor(target, cv2.COLOR_BGR2RGB)
-
-        # Resize
-        source, source_pad_info = resize_and_pad_to_square(source, self.target_size)
-        target, target_pad_info = resize_and_pad_to_square(target, self.target_size)
-
-        # Normalize source and ref images to [0, 1].
-        source = source.astype(np.float32) / 255.0
-
-        # Normalize target images to [-1, 1].
-        target = (target.astype(np.float32) / 127.5) - 1.0
+        ref1_name = item["ref"]["ref1_name"]
+        ref2_name = item["ref"]["ref2_name"]
+        scene_name  = item["dataset"] + "/" + item["scene_tag"] + "/" + item["image_name"] + "_" + f"ref1_{ref1_name}" + "_" + f"ref2_{ref2_name}"
 
         # Load ref bank
         ref_pose_bank_path = os.path.join(self.root_path, item["ref"]["ref_bank_path"])
@@ -181,32 +165,17 @@ class MyDataset(Dataset):
                 + random.sample(remaining_refs, n_extra)
             )
 
-        refs = []
-        ref_poses = []
-
-        for trained_image in selected_refs:
-            ref_path = os.path.join(trained_folder_path, trained_image)
-            ref_pose = self.normalize_pose(ref_pose_bank[trained_image])
-            ref      = cv2.imread(ref_path)
-            ref      = cv2.cvtColor(ref,   cv2.COLOR_BGR2RGB)
-            ref, _   = resize_and_pad_to_square(ref, self.target_size)
-            ref      = ref.astype(np.float32) / 255.0
-            refs.append(ref)
-            ref_poses.append(ref_pose)
-
-        while len(refs) < self.max_ref:
-            refs.append(np.zeros_like(refs[0]))
+        # Pose luôn cần cho cả 2 mode (cache/non-cache)
+        ref_poses = [self.normalize_pose(ref_pose_bank[name]) for name in selected_refs]
+        while len(ref_poses) < self.max_ref:
             ref_poses.append(np.zeros_like(ref_poses[0]))
-        
-        refs = np.stack(refs)
         ref_poses = np.stack(ref_poses)
-        
+
         ref_masks = np.zeros(self.max_ref, dtype=bool)
         ref_masks[:len(selected_refs)] = True
 
-        result = dict(groundtruth=target, txt=prompt, artifact=source,
-                      ref=refs, ref_pose=ref_poses, ref_mask=ref_masks,
-                      pad_info=source_pad_info, scene_name=scene_name)
+        result = dict(txt=prompt, ref_pose=ref_poses, ref_mask=ref_masks,
+                      scene_name=scene_name)
         
         if self.use_cached_latent:
             def img_to_cache_path(abs_img_path, prefix):
@@ -237,6 +206,30 @@ class MyDataset(Dataset):
 
             result["use_cache"] = True
             result["ref_dino"]  = torch.stack(ref_dinos)  # [max_ref, dim]
+
+        else:
+            # Non-cache: cần ảnh raw để encode online
+            source = cv2.cvtColor(cv2.imread(source_path), cv2.COLOR_BGR2RGB)
+            target = cv2.cvtColor(cv2.imread(target_path), cv2.COLOR_BGR2RGB)
+            source, source_pad_info = resize_and_pad_to_square(source, self.target_size)
+            target, _ = resize_and_pad_to_square(target, self.target_size)
+
+            source = source.astype(np.float32) / 255.0            # [0, 1]
+            target = (target.astype(np.float32) / 127.5) - 1.0    # [-1, 1]
+
+            refs = []
+            for trained_image in selected_refs:
+                ref_path = os.path.join(trained_folder_path, trained_image)
+                ref      = cv2.cvtColor(cv2.imread(ref_path), cv2.COLOR_BGR2RGB)
+                ref, _   = resize_and_pad_to_square(ref, self.target_size)
+                refs.append(ref.astype(np.float32) / 255.0)
+            while len(refs) < self.max_ref:
+                refs.append(np.zeros_like(refs[0]))
+
+            result["groundtruth"] = target
+            result["artifact"]    = source
+            result["ref"]         = np.stack(refs)
+            result["pad_info"]    = source_pad_info
 
         return result
 

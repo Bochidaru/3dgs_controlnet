@@ -1,0 +1,35 @@
+name: control
+channels:
+  - defaults
+dependencies:
+  - python=3.12
+  - pip
+  - pip:
+      - torch==2.13.0
+      - torchvision
+      - albumentations==1.3.0
+      - opencv-contrib-python==4.8.1.78
+      - opencv-python==4.8.1.78
+      - opencv-python-headless==4.8.1.78
+      - imageio==2.9.0
+      - imageio-ffmpeg==0.4.2
+      - pytorch-lightning>=2.0
+      - omegaconf==2.1.1
+      - test-tube>=0.7.5
+      - einops==0.3.0
+      - transformers==4.46.3
+      - webdataset==0.2.5
+      - kornia>=0.7
+      - open_clip_torch
+      - invisible-watermark>=0.1.5
+      - torchmetrics
+      - timm==1.0.26
+      - addict==2.4.0
+      - yapf==0.32.0
+      - prettytable==3.6.0
+      - safetensors
+      - ipywidgets
+      - hf_xet
+      - gdown
+      - huggingface-hub[cli]
+      - numpy==1.26.4
