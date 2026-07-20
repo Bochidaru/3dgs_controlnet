@@ -2,6 +2,7 @@ import einops
 import torch
 import torch as th
 import torch.nn as nn
+import numpy as np
 
 torch.set_float32_matmul_precision('high')
 
@@ -541,30 +542,39 @@ class ControlLDM(LatentDiffusion):
 
         return log
 
-    # @torch.no_grad()
-    # def sample_log(self, cond, batch_size, ddim, ddim_steps, **kwargs):
-    #     ddim_sampler = DDIMSampler(self)
-    #     b, c, h, w = cond["c_concat"][0].shape
-    #     shape = (self.channels, h, w)         ## nếu không đưa control vào latent: shape = (self.channels, h // 8, w // 8)
-    #     samples, intermediates = ddim_sampler.sample(ddim_steps, batch_size, shape, cond, verbose=False, **kwargs)
-    #     return samples, intermediates
+    @torch.no_grad()
+    def sample_log_old(self, cond, batch_size, ddim, ddim_steps, **kwargs):
+        ddim_sampler = DDIMSampler(self)
+        b, c, h, w = cond["c_concat"][0].shape
+        shape = (self.channels, h, w)         ## nếu không đưa control vào latent: shape = (self.channels, h // 8, w // 8)
+        samples, intermediates = ddim_sampler.sample(ddim_steps, batch_size, shape, cond, verbose=False, **kwargs)
+        return samples, intermediates
     
     @torch.no_grad()
     def sample_log(self, cond, batch_size, ddim, ddim_steps, **kwargs):
         artifact_latent = cond["c_concat"][0]
+        ddpm_t = 200
         ddim_sampler = DDIMSampler(self)
+
+        ddim_idx = np.argmin(
+            np.abs(ddim_sampler.ddim_timesteps - ddpm_t)
+        )
+
         ddim_sampler.make_schedule(
-            ddim_num_steps=1000,
+            ddim_num_steps=ddim_steps,
             ddim_eta=0,
             verbose=False
         )
-        t = torch.full((batch_size,), 200, device=self.device, dtype=torch.long)
-        noise = torch.randn_like(artifact_latent)
+        t = torch.full((batch_size,), ddim_sampler.ddim_timesteps[ddim_idx], device=self.device, dtype=torch.long)
+
+        g = torch.Generator(device=self.device)
+        g.manual_seed(42)
+        noise = torch.randn_like(artifact_latent, generator=g, device=self.device)
         x_t = self.q_sample(x_start=artifact_latent, t=t, noise=noise)
 
-        samples = ddim_sampler.decode(x_t, cond, t_start=201)
+        samples = ddim_sampler.decode(x_t, cond, t_start=ddim_idx + 1)
 
-        return samples
+        return samples, None
 
 
     # def configure_optimizers(self):
