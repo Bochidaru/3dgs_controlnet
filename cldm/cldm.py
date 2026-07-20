@@ -541,13 +541,31 @@ class ControlLDM(LatentDiffusion):
 
         return log
 
+    # @torch.no_grad()
+    # def sample_log(self, cond, batch_size, ddim, ddim_steps, **kwargs):
+    #     ddim_sampler = DDIMSampler(self)
+    #     b, c, h, w = cond["c_concat"][0].shape
+    #     shape = (self.channels, h, w)         ## nếu không đưa control vào latent: shape = (self.channels, h // 8, w // 8)
+    #     samples, intermediates = ddim_sampler.sample(ddim_steps, batch_size, shape, cond, verbose=False, **kwargs)
+    #     return samples, intermediates
+    
     @torch.no_grad()
     def sample_log(self, cond, batch_size, ddim, ddim_steps, **kwargs):
+        artifact_latent = cond["c_concat"][0]
         ddim_sampler = DDIMSampler(self)
-        b, c, h, w = cond["c_concat"][0].shape
-        shape = (self.channels, h, w)         ## nếu không đưa control vào latent: shape = (self.channels, h // 8, w // 8)
-        samples, intermediates = ddim_sampler.sample(ddim_steps, batch_size, shape, cond, verbose=False, **kwargs)
-        return samples, intermediates
+        ddim_sampler.make_schedule(
+            ddim_num_steps=1000,
+            ddim_eta=0,
+            verbose=False
+        )
+        t = torch.full((batch_size,), 200, device=self.device, dtype=torch.long)
+        noise = torch.randn_like(artifact_latent)
+        x_t = self.q_sample(x_start=artifact_latent, t=t, noise=noise)
+
+        samples = ddim_sampler.decode(x_t, cond, t_start=201)
+
+        return samples
+
 
     # def configure_optimizers(self):
     #     lr = self.learning_rate
