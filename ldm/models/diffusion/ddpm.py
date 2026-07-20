@@ -19,6 +19,7 @@ from tqdm import tqdm
 from torchvision.utils import make_grid
 from pytorch_lightning.utilities import rank_zero_only
 from omegaconf import ListConfig
+import torch.nn.functional as F
 
 from ldm.util import log_txt_as_img, exists, default, ismap, isimage, mean_flat, count_params, instantiate_from_config
 from ldm.modules.ema import LitEma
@@ -882,40 +883,77 @@ class LatentDiffusion(DDPM):
         kl_prior = normal_kl(mean1=qt_mean, logvar1=qt_log_variance, mean2=0.0, logvar2=0.0)
         return mean_flat(kl_prior) / np.log(2.0)
 
+    # def p_losses(self, x_start, cond, t, noise=None):
+    #     noise = default(noise, lambda: torch.randn_like(x_start))
+    #     x_noisy = self.q_sample(x_start=x_start, t=t, noise=noise)
+    #     model_output = self.apply_model(x_noisy, t, cond)
+
+    #     loss_dict = {}
+    #     prefix = 'train' if self.training else 'val'
+
+    #     if self.parameterization == "x0":
+    #         target = x_start
+    #     elif self.parameterization == "eps":
+    #         target = noise
+    #     elif self.parameterization == "v":
+    #         target = self.get_v(x_start, noise, t)
+    #     else:
+    #         raise NotImplementedError()
+
+    #     loss_simple = self.get_loss(model_output, target, mean=False).mean([1, 2, 3])
+    #     loss_dict.update({f'{prefix}/loss_simple': loss_simple.mean()})
+
+    #     logvar_t = self.logvar[t].to(self.device)
+    #     loss = loss_simple / torch.exp(logvar_t) + logvar_t
+    #     # loss = loss_simple / torch.exp(self.logvar) + self.logvar
+    #     if self.learn_logvar:
+    #         loss_dict.update({f'{prefix}/loss_gamma': loss.mean()})
+    #         loss_dict.update({'logvar': self.logvar.data.mean()})
+
+    #     loss = self.l_simple_weight * loss.mean()
+
+    #     loss_vlb = self.get_loss(model_output, target, mean=False).mean(dim=(1, 2, 3))
+    #     loss_vlb = (self.lvlb_weights[t] * loss_vlb).mean()
+    #     loss_dict.update({f'{prefix}/loss_vlb': loss_vlb})
+    #     loss += (self.original_elbo_weight * loss_vlb)
+    #     loss_dict.update({f'{prefix}/loss': loss})
+
+    #     return loss, loss_dict
+
     def p_losses(self, x_start, cond, t, noise=None):
-        noise = default(noise, lambda: torch.randn_like(x_start))
-        x_noisy = self.q_sample(x_start=x_start, t=t, noise=noise)
-        model_output = self.apply_model(x_noisy, t, cond)
+        # x_start = target latent
+        artifact = cond["c_concat"][0]
+        noise = default(noise, lambda: torch.randn_like(artifact))
+        # q_sample trên artifact thay vì target
+        x_noisy = self.q_sample(x_start=artifact, t=t, noise=noise)
+        pred_eps = self.apply_model(x_noisy, t, cond)
 
         loss_dict = {}
         prefix = 'train' if self.training else 'val'
 
-        if self.parameterization == "x0":
-            target = x_start
-        elif self.parameterization == "eps":
-            target = noise
-        elif self.parameterization == "v":
-            target = self.get_v(x_start, noise, t)
-        else:
-            raise NotImplementedError()
-
-        loss_simple = self.get_loss(model_output, target, mean=False).mean([1, 2, 3])
-        loss_dict.update({f'{prefix}/loss_simple': loss_simple.mean()})
+        # EPS LOSS
+        loss_simple = self.get_loss(pred_eps, noise, mean=False).mean([1, 2, 3])
+        loss_dict[f'{prefix}/loss_simple'] = loss_simple.mean()
 
         logvar_t = self.logvar[t].to(self.device)
-        loss = loss_simple / torch.exp(logvar_t) + logvar_t
-        # loss = loss_simple / torch.exp(self.logvar) + self.logvar
+        loss_eps = loss_simple / torch.exp(logvar_t) + logvar_t
         if self.learn_logvar:
-            loss_dict.update({f'{prefix}/loss_gamma': loss.mean()})
-            loss_dict.update({'logvar': self.logvar.data.mean()})
+            loss_dict[f'{prefix}/loss_gamma'] = loss_eps.mean()
+            loss_dict['logvar'] = self.logvar.data.mean()
 
-        loss = self.l_simple_weight * loss.mean()
+        loss_eps = self.l_simple_weight * loss_eps.mean()
 
-        loss_vlb = self.get_loss(model_output, target, mean=False).mean(dim=(1, 2, 3))
-        loss_vlb = (self.lvlb_weights[t] * loss_vlb).mean()
-        loss_dict.update({f'{prefix}/loss_vlb': loss_vlb})
-        loss += (self.original_elbo_weight * loss_vlb)
-        loss_dict.update({f'{prefix}/loss': loss})
+        # X0 LOSS
+        pred_x0 = self.predict_start_from_noise(x_noisy, t, pred_eps)
+        loss_x0 = F.l1_loss(pred_x0, x_start, reduction="mean")
+        loss_dict[f'{prefix}/loss_x0'] = loss_x0
+
+        # TOTAL LOSS
+        lambda_x0 = 0.05
+
+        loss = loss_eps + lambda_x0 * loss_x0
+
+        loss_dict[f'{prefix}/loss'] = loss
 
         return loss, loss_dict
 

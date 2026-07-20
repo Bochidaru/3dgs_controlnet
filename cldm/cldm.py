@@ -473,7 +473,7 @@ class ControlLDM(LatentDiffusion):
     def log_images(self, batch, N=4, n_row=2, sample=False, ddim_steps=50, ddim_eta=0.0, return_keys=None,
                    quantize_denoised=True, inpaint=True, plot_denoise_rows=False, plot_progressive_rows=True,
                    plot_diffusion_rows=False, unconditional_guidance_scale=9.0, unconditional_guidance_label=None,
-                   use_ema_scope=True,
+                   use_ema_scope=True, use_artifact_decode=False,
                    **kwargs):
         use_ddim = ddim_steps is not None
 
@@ -512,38 +512,43 @@ class ControlLDM(LatentDiffusion):
             log["diffusion_row"] = diffusion_grid
 
         if sample:
-
-            # get denoise row
-            samples, z_denoise_row = self.sample_log(cond={"c_concat": [c_cat], "c_crossattn": [c],
-                                                           "c_ref1": [c_ref1], "c_ref2": [c_ref2],
-                                                           "c_ref1_pose": [c_ref1_pose], "c_ref2_pose": [c_ref2_pose],},
-                                                     batch_size=N, ddim=use_ddim,
-                                                     ddim_steps=ddim_steps, eta=ddim_eta)
+            if use_artifact_decode:
+                samples, z_denoise_row = self.sample_log(cond={"c_concat": [c_cat], "c_crossattn": [c],
+                                                    "c_ref1": [c_ref1], "c_ref2": [c_ref2],
+                                                    "c_ref1_pose": [c_ref1_pose], "c_ref2_pose": [c_ref2_pose],},
+                                                batch_size=N, ddim=use_ddim,
+                                                ddim_steps=ddim_steps, eta=ddim_eta)        
+            else:
+                samples, z_denoise_row = self.sample_log_full(cond={"c_concat": [c_cat], "c_crossattn": [c],
+                                                            "c_ref1": [c_ref1], "c_ref2": [c_ref2],
+                                                            "c_ref1_pose": [c_ref1_pose], "c_ref2_pose": [c_ref2_pose],},
+                                                        batch_size=N, ddim=use_ddim,
+                                                        ddim_steps=ddim_steps, eta=ddim_eta)
             x_samples = self.decode_first_stage(samples)
             log["samples"] = x_samples
             if plot_denoise_rows:
                 denoise_grid = self._get_denoise_row_from_list(z_denoise_row)
                 log["denoise_row"] = denoise_grid
 
-        if unconditional_guidance_scale > 1.0:
-            uc_cross = self.get_unconditional_conditioning(N)
-            uc_cat = c_cat  # torch.zeros_like(c_cat)
-            uc_full = {"c_concat": [uc_cat], "c_crossattn": [uc_cross]}
-            samples_cfg, _ = self.sample_log(cond={"c_concat": [c_cat], "c_crossattn": [c],
-                                                    "c_ref1": [c_ref1], "c_ref2": [c_ref2],
-                                                    "c_ref1_pose": [c_ref1_pose], "c_ref2_pose": [c_ref2_pose],},
-                                             batch_size=N, ddim=use_ddim,
-                                             ddim_steps=ddim_steps, eta=ddim_eta,
-                                             unconditional_guidance_scale=unconditional_guidance_scale,
-                                             unconditional_conditioning=uc_full,
-                                             )
-            x_samples_cfg = self.decode_first_stage(samples_cfg)
-            log[f"samples_cfg_scale_{unconditional_guidance_scale:.2f}"] = x_samples_cfg
+        # if unconditional_guidance_scale > 1.0:
+        #     uc_cross = self.get_unconditional_conditioning(N)
+        #     uc_cat = c_cat  # torch.zeros_like(c_cat)
+        #     uc_full = {"c_concat": [uc_cat], "c_crossattn": [uc_cross]}
+        #     samples_cfg, _ = self.sample_log(cond={"c_concat": [c_cat], "c_crossattn": [c],
+        #                                             "c_ref1": [c_ref1], "c_ref2": [c_ref2],
+        #                                             "c_ref1_pose": [c_ref1_pose], "c_ref2_pose": [c_ref2_pose],},
+        #                                      batch_size=N, ddim=use_ddim,
+        #                                      ddim_steps=ddim_steps, eta=ddim_eta,
+        #                                      unconditional_guidance_scale=unconditional_guidance_scale,
+        #                                      unconditional_conditioning=uc_full,
+        #                                      )
+        #     x_samples_cfg = self.decode_first_stage(samples_cfg)
+        #     log[f"samples_cfg_scale_{unconditional_guidance_scale:.2f}"] = x_samples_cfg
 
         return log
 
     @torch.no_grad()
-    def sample_log_old(self, cond, batch_size, ddim, ddim_steps, **kwargs):
+    def sample_log_full(self, cond, batch_size, ddim, ddim_steps, **kwargs):
         ddim_sampler = DDIMSampler(self)
         b, c, h, w = cond["c_concat"][0].shape
         shape = (self.channels, h, w)         ## nếu không đưa control vào latent: shape = (self.channels, h // 8, w // 8)
@@ -556,15 +561,16 @@ class ControlLDM(LatentDiffusion):
         ddpm_t = 200
         ddim_sampler = DDIMSampler(self)
 
-        ddim_idx = np.argmin(
-            np.abs(ddim_sampler.ddim_timesteps - ddpm_t)
-        )
-
         ddim_sampler.make_schedule(
             ddim_num_steps=ddim_steps,
             ddim_eta=0,
             verbose=False
         )
+
+        ddim_idx = np.argmin(
+            np.abs(ddim_sampler.ddim_timesteps - ddpm_t)
+        )
+
         t = torch.full((batch_size,), ddim_sampler.ddim_timesteps[ddim_idx], device=self.device, dtype=torch.long)
 
         g = torch.Generator(device=self.device)

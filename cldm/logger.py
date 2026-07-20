@@ -24,6 +24,7 @@ class ImageLogger(Callback):
         self.log_on_batch_idx = log_on_batch_idx
         self.log_images_kwargs = log_images_kwargs if log_images_kwargs else {}
         self.log_first_step = log_first_step
+        self.log_mode_toggle = False
 
         # For global step
         self.train_last_log_step = -1
@@ -31,8 +32,9 @@ class ImageLogger(Callback):
         self.val_batch_cache = val_batch_cache
 
     @rank_zero_only
-    def log_local(self, save_dir, split, images, global_step, current_epoch, batch_idx):
-        root = os.path.join(save_dir, "image_log", split, f"step_{global_step:06}")
+    def log_local(self, save_dir, split, images, global_step, current_epoch, batch_idx, use_artifact_decode):
+        sampler_name = "t200" if use_artifact_decode else "full"
+        root = os.path.join(save_dir, "image_log", split, f"step_{global_step:06}_{sampler_name}")
         for k in images:
             if k == "scene_name":
                 scene_names = images[k]
@@ -56,7 +58,7 @@ class ImageLogger(Callback):
             os.makedirs(os.path.split(path)[0], exist_ok=True)
             Image.fromarray(grid).save(path)
 
-    def log_img(self, pl_module, batch, batch_idx, split="train"):
+    def log_img(self, pl_module, batch, batch_idx, split="train", use_artifact_decode=False):
 
         if ( # batch_idx % self.batch_freq == 0
                 hasattr(pl_module, "log_images") and
@@ -70,7 +72,7 @@ class ImageLogger(Callback):
                 pl_module.eval()
 
             with torch.no_grad():
-                images = pl_module.log_images(batch, split=split, **self.log_images_kwargs)
+                images = pl_module.log_images(batch, split=split, use_artifact_decode=use_artifact_decode, **self.log_images_kwargs)
 
             for k in images:
                 if not isinstance(images[k], torch.Tensor):
@@ -83,7 +85,7 @@ class ImageLogger(Callback):
                         images[k] = torch.clamp(images[k], -1., 1.)
 
             self.log_local(pl_module.logger.save_dir, split, images,
-                           pl_module.global_step, pl_module.current_epoch, batch_idx)
+                           pl_module.global_step, pl_module.current_epoch, batch_idx, use_artifact_decode)
 
             if is_train:
                 pl_module.train()
@@ -98,8 +100,11 @@ class ImageLogger(Callback):
                 return
             if self.check_frequency(check_idx):
                 self.train_last_log_step = check_idx
-                self.log_img(pl_module, batch, batch_idx, split="train")
+
+                self.log_mode_toggle = not self.log_mode_toggle
+
+                self.log_img(pl_module, batch, batch_idx, split="train", use_artifact_decode=self.log_mode_toggle)
                 for idx, val_batch in enumerate(self.val_batch_cache):
-                    self.log_img(pl_module, val_batch, idx, split="val")
+                    self.log_img(pl_module, val_batch, idx, split="val", use_artifact_decode=self.log_mode_toggle)
 
             
