@@ -923,28 +923,36 @@ class LatentDiffusion(DDPM):
     def p_losses(self, x_start, cond, t, noise=None):
         artifact = cond["c_concat"][0]
         noise = default(noise, lambda: torch.randn_like(artifact))
-        
+
         x_noisy = self.q_sample(x_start=artifact, t=t, noise=noise)
         pred_eps = self.apply_model(x_noisy, t, cond)
 
-        # Tính epsilon "đúng" để denoise về target thay vì artifact
-        sqrt_alpha = extract_into_tensor(self.sqrt_alphas_cumprod, t, artifact.shape)
-        sqrt_one_minus = extract_into_tensor(self.sqrt_one_minus_alphas_cumprod, t, artifact.shape)
-        
-        # eps để recover target từ x_noisy
-        eps_toward_target = (x_noisy - sqrt_alpha * x_start) / sqrt_one_minus
-        
-        loss_simple = self.get_loss(pred_eps, eps_toward_target, mean=False).mean([1, 2, 3])
-
         loss_dict = {}
         prefix = 'train' if self.training else 'val'
-        loss_dict[f'{prefix}/loss_simple'] = loss_simple.mean()
 
-        logvar_t = self.logvar[t].to(self.device)
-        loss = loss_simple / torch.exp(logvar_t) + logvar_t
-        loss = self.l_simple_weight * loss.mean()
+        sqrt_alpha = extract_into_tensor(self.sqrt_alphas_cumprod, t, artifact.shape)
+        sqrt_one_minus = extract_into_tensor(self.sqrt_one_minus_alphas_cumprod, t, artifact.shape)
 
+        eps_toward_target = (x_noisy - sqrt_alpha * x_start) / sqrt_one_minus
+
+        # Per-sample loss, chưa mean
+        loss_eps_per_sample = self.get_loss(pred_eps, eps_toward_target, mean=False).mean([1, 2, 3])  # [B]
+
+        pred_x0 = self.predict_start_from_noise(x_noisy, t, pred_eps)
+        loss_x0_per_sample = F.l1_loss(pred_x0, x_start, reduction="none").mean([1, 2, 3])  # [B]
+
+        # Per-sample weight, normalize đúng [0,1]
+        tau = t.float() / (self.num_timesteps - 1)
+        w = torch.sigmoid(10 * (tau - 0.5))     # [B]
+
+        loss_per_sample = w * loss_eps_per_sample + (1.0 - w) * loss_x0_per_sample  # [B]
+        loss = loss_per_sample.mean()
+
+        loss_dict[f'{prefix}/loss_eps_target'] = loss_eps_per_sample.mean()
+        loss_dict[f'{prefix}/loss_x0'] = loss_x0_per_sample.mean()
+        loss_dict[f'{prefix}/weight_mean'] = w.mean()
         loss_dict[f'{prefix}/loss'] = loss
+
         return loss, loss_dict
 
     def p_mean_variance(self, x, c, t, clip_denoised: bool, return_codebook_ids=False, quantize_denoised=False,
