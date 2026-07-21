@@ -921,40 +921,30 @@ class LatentDiffusion(DDPM):
     #     return loss, loss_dict
 
     def p_losses(self, x_start, cond, t, noise=None):
-        # x_start = target latent
         artifact = cond["c_concat"][0]
         noise = default(noise, lambda: torch.randn_like(artifact))
-        # q_sample trên artifact thay vì target
+        
         x_noisy = self.q_sample(x_start=artifact, t=t, noise=noise)
         pred_eps = self.apply_model(x_noisy, t, cond)
 
+        # Tính epsilon "đúng" để denoise về target thay vì artifact
+        sqrt_alpha = extract_into_tensor(self.sqrt_alphas_cumprod, t, artifact.shape)
+        sqrt_one_minus = extract_into_tensor(self.sqrt_one_minus_alphas_cumprod, t, artifact.shape)
+        
+        # eps để recover target từ x_noisy
+        eps_toward_target = (x_noisy - sqrt_alpha * x_start) / sqrt_one_minus
+        
+        loss_simple = self.get_loss(pred_eps, eps_toward_target, mean=False).mean([1, 2, 3])
+
         loss_dict = {}
         prefix = 'train' if self.training else 'val'
-
-        # EPS LOSS
-        loss_simple = self.get_loss(pred_eps, noise, mean=False).mean([1, 2, 3])
         loss_dict[f'{prefix}/loss_simple'] = loss_simple.mean()
 
         logvar_t = self.logvar[t].to(self.device)
-        loss_eps = loss_simple / torch.exp(logvar_t) + logvar_t
-        if self.learn_logvar:
-            loss_dict[f'{prefix}/loss_gamma'] = loss_eps.mean()
-            loss_dict['logvar'] = self.logvar.data.mean()
-
-        loss_eps = self.l_simple_weight * loss_eps.mean()
-
-        # X0 LOSS
-        pred_x0 = self.predict_start_from_noise(x_noisy, t, pred_eps)
-        loss_x0 = F.l1_loss(pred_x0, x_start, reduction="mean")
-        loss_dict[f'{prefix}/loss_x0'] = loss_x0
-
-        # TOTAL LOSS
-        lambda_x0 = 0.05
-
-        loss = loss_eps + lambda_x0 * loss_x0
+        loss = loss_simple / torch.exp(logvar_t) + logvar_t
+        loss = self.l_simple_weight * loss.mean()
 
         loss_dict[f'{prefix}/loss'] = loss
-
         return loss, loss_dict
 
     def p_mean_variance(self, x, c, t, clip_denoised: bool, return_codebook_ids=False, quantize_denoised=False,
