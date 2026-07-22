@@ -558,7 +558,7 @@ class ControlLDM(LatentDiffusion):
     @torch.no_grad()
     def sample_log(self, cond, batch_size, ddim, ddim_steps, **kwargs):
         artifact_latent = cond["c_concat"][0]
-        ddpm_t = 200
+        ddpm_t = 300
         ddim_sampler = DDIMSampler(self)
 
         ddim_sampler.make_schedule(
@@ -593,60 +593,81 @@ class ControlLDM(LatentDiffusion):
     #     return opt
 
     def configure_optimizers(self):
-        lr_base = self.learning_rate
-        lr_new  = self.learning_rate_for_new_module
+        lr_base = self.learning_rate                    # ControlNet pretrained (1e-5)
+        lr_new = self.learning_rate_for_new_module      # New modules (2e-5)
+        lr_unet = 2e-6                                  # SD UNet output blocks
 
         new_module_names = {
             "ref_latent_proj",
-            "pose_emb", 
+            "pose_emb",
             "hf_head",
-            "art_ref_trans_block", 
+            "art_ref_trans_block",
             "input_hint_block",
         }
 
         base_params = []
-        new_params  = []
+        new_params = []
+        unet_params = []
 
         for name, param in self.control_model.named_parameters():
             if not param.requires_grad:
                 continue
+
             top_module = name.split(".")[0]
             if top_module in new_module_names:
                 new_params.append(param)
             else:
                 base_params.append(param)
 
-        total_assigned  = len(base_params) + len(new_params)
+        total_assigned = len(base_params) + len(new_params)
         total_trainable = sum(1 for p in self.control_model.parameters() if p.requires_grad)
+
         assert total_assigned == total_trainable, \
             f"Bỏ sót param: assigned={total_assigned}, trainable={total_trainable}"
 
         if not self.sd_locked:
-            unet_out = (
+            unet_params = (
                 list(self.model.diffusion_model.output_blocks.parameters())
                 + list(self.model.diffusion_model.out.parameters())
             )
-            base_params += unet_out
 
-        opt = torch.optim.AdamW([
-            {"params": base_params, "lr": lr_base, "name": "pretrained"},
-            {"params": new_params,  "lr": lr_new,     "name": "new"},
-        ], lr=lr_base)
+        param_groups = [
+            {"params": base_params, "lr": lr_base, "name": "controlnet"},
+            {"params": new_params, "lr": lr_new, "name": "new"},
+        ]
+
+        if len(unet_params) > 0:
+            param_groups.append(
+                {"params": unet_params, "lr": lr_unet, "name": "unet_out"}
+            )
+
+        opt = torch.optim.AdamW(param_groups)
 
         warmup_steps = 1000
+
+        def base_lr_lambda(step):
+            return 1.0
 
         def new_lr_lambda(step):
             if step < warmup_steps:
                 return (step + 1) / warmup_steps
             return 1.0
 
-        def base_lr_lambda(step):
-            return 1.0   # không warmup, giữ nguyên lr_base
+        def unet_lr_lambda(step):
+            return 1.0
 
-        scheduler = torch.optim.lr_scheduler.LambdaLR(opt, lr_lambda=[
-            base_lr_lambda,   # group 0: pretrained
-            new_lr_lambda,    # group 1: new
-        ])
+        lr_lambdas = [
+            base_lr_lambda,
+            new_lr_lambda,
+        ]
+
+        if len(unet_params) > 0:
+            lr_lambdas.append(unet_lr_lambda)
+
+        scheduler = torch.optim.lr_scheduler.LambdaLR(
+            opt,
+            lr_lambda=lr_lambdas
+        )
 
         return {
             "optimizer": opt,
