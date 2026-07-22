@@ -33,8 +33,9 @@ resume_ckpt_path = ""                             ## For example: "./models/weig
 pretrain_path = './models/control_sd15_ini.ckpt'
 pl.seed_everything(42, workers=True)
 use_cache_latent = True
-learning_rate = 1e-5
+learning_rate_for_controlnet = 1e-5
 learning_rate_for_new_module = 2e-5
+learning_rate_for_unet_out = 2e-6
 sd_locked = False
 only_mid_control = False
 num_val_batches = 1
@@ -42,8 +43,9 @@ image_logger_freq = 500
 
 
 lr_override_values = {
-    "pretrained": learning_rate,
-    "new":        learning_rate_for_new_module,
+    "controlnet": learning_rate_for_controlnet,
+    "new": learning_rate_for_new_module,
+    "unet_out": learning_rate_for_unet_out,
 }
 
 
@@ -66,8 +68,9 @@ checkpoint_callback = ModelCheckpoint(
 
 # First use cpu to load models. Pytorch Lightning will automatically move it to GPUs.
 model = create_model('./models/3dgs_cldm_v15.yaml').cpu()
-model.learning_rate = learning_rate
+model.learning_rate_for_controlnet = learning_rate_for_controlnet
 model.learning_rate_for_new_module = learning_rate_for_new_module
+model.learning_rate_for_unet_out = learning_rate_for_unet_out
 model.sd_locked = sd_locked
 model.only_mid_control = only_mid_control
 

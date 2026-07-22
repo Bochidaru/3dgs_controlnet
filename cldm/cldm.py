@@ -595,7 +595,7 @@ class ControlLDM(LatentDiffusion):
     def configure_optimizers(self):
         lr_base = self.learning_rate                    # ControlNet pretrained (1e-5)
         lr_new = self.learning_rate_for_new_module      # New modules (2e-5)
-        lr_unet = 2e-6                                  # SD UNet output blocks
+        lr_unet = self.learning_rate_for_unet_out       # SD UNet output blocks
 
         new_module_names = {
             "ref_latent_proj",
