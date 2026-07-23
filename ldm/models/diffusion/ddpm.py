@@ -440,6 +440,15 @@ class DDPM(pl.LightningModule):
                 if self.ucg_prng.choice(2, p=[1 - p, p]):
                     batch[k][i] = val
 
+        # Chỉ ghi LR mỗi 100 step
+        if self.global_step % 100 == 0:
+            opt = self.trainer.optimizers[0]
+            with open("lr_log.txt", "a") as f:
+                for idx, group in enumerate(opt.param_groups):
+                    name = group.get("name", f"group{idx}")
+                    lr_val = group["lr"]
+                    f.write(f"step={self.global_step}, {name}: {lr_val:.6e}\n")
+
         loss, loss_dict = self.shared_step(batch)
 
         self.log_dict(loss_dict, prog_bar=True,

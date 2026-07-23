@@ -15,3 +15,5 @@ lightning_logs
 models/*.ckpt
 
 weights/
+
+lr_log.txt
