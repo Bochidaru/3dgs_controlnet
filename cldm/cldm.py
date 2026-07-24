@@ -21,6 +21,11 @@ from ldm.models.diffusion.ddpm import LatentDiffusion, disabled_train
 from ldm.util import log_txt_as_img, exists, instantiate_from_config
 from ldm.models.diffusion.ddim import DDIMSampler
 from cldm.film_head import FiLMHead
+from cldm.fuseblock import FuseBlock
+
+
+FUSE_IDX = [ 2, 5, 8, 11 ]  # start from 0 to 12 (12 is middleblock), middle block is always being added to unet diff
+                                    # 2: 64; 5: 32; 8: 16; 11: 8; middle: 8 
 
 
 class ControlledUnetModel(UNetModel):
@@ -38,13 +43,14 @@ class ControlledUnetModel(UNetModel):
 
         if control is not None:
             h += control.pop()
-
+        idx = 11
         for i, module in enumerate(self.output_blocks):
-            if only_mid_control or control is None:
+            if only_mid_control or control is None or idx not in FUSE_IDX:
                 h = torch.cat([h, hs.pop()], dim=1)
             else:
                 h = torch.cat([h, hs.pop() + control.pop()], dim=1)
             h = module(h, emb, context)
+            idx -= 1
 
         h = h.type(x.dtype)
         return self.out(h)
@@ -134,7 +140,7 @@ class ControlNet(nn.Module):
         self.num_heads_upsample = num_heads_upsample
         self.predict_codebook_ids = n_embed is not None
         self.pose_emb_dim = pose_emb_dim
-
+                                        
         time_embed_dim = model_channels * 4
         self.time_embed = nn.Sequential(
             linear(model_channels, time_embed_dim),
@@ -171,30 +177,20 @@ class ControlNet(nn.Module):
         # )
         '''
 
-        self.input_hint_block = TimestepEmbedSequential(
-            conv_nd(dims, in_channels, 16, 3, padding=1),
-            nn.SiLU(),
-            conv_nd(dims, 16, 32, 3, padding=1),
-            nn.SiLU(),
-            conv_nd(dims, 32, 128, 3, padding=1),
-            nn.SiLU(),
-            zero_module(conv_nd(dims, 128, model_channels, 3, padding=1)),
+
+        self.ref_time_emb = nn.Parameter(torch.zeros(1, time_embed_dim))
+        self.input_art_ref_block = TimestepEmbedSequential(
+            zero_module(conv_nd(dims, in_channels, model_channels, 3, padding=1)),
         )
-        self.art_ref_trans_block = SpatialTransformer(
-                model_channels, 8, model_channels//8, depth=transformer_depth, context_dim=context_dim,
-                disable_self_attn=False, use_linear=use_linear_in_transformer,
-                use_checkpoint=use_checkpoint
-            )
-        self.pose_emb = nn.Sequential(
-            nn.Linear(9, 128),
-            nn.SiLU(),
-            nn.Linear(128, 512),
-            nn.SiLU(),
-            nn.Linear(512, pose_emb_dim),   ## default: pose_emb_dim=64
-            nn.SiLU(),
-        )
-        self.ref_latent_proj = nn.Linear(4, context_dim)
-        self.hf_head = FiLMHead(pose_dim=pose_emb_dim, token_dim=context_dim)
+        self.fuse_blocks = nn.ModuleList([
+                            FuseBlock(320),
+                            FuseBlock(640),
+                            FuseBlock(1280),
+                            FuseBlock(1280),
+                            FuseBlock(1280),
+                        ])
+
+
 
         self._feature_size = model_channels
         input_block_chans = [model_channels]
@@ -239,7 +235,7 @@ class ControlNet(nn.Module):
                             ) if not use_spatial_transformer else SpatialTransformer(
                                 ch, num_heads, dim_head, depth=transformer_depth, context_dim=context_dim,
                                 disable_self_attn=disabled_sa, use_linear=use_linear_in_transformer,
-                                use_checkpoint=use_checkpoint
+                                use_checkpoint=use_checkpoint, use_simple_tf_block=True    # tắt 1 lần attn với cond là text
                             )
                         )
                 self.input_blocks.append(TimestepEmbedSequential(*layers))
@@ -298,7 +294,7 @@ class ControlNet(nn.Module):
             ) if not use_spatial_transformer else SpatialTransformer(  # always uses a self-attn
                 ch, num_heads, dim_head, depth=transformer_depth, context_dim=context_dim,
                 disable_self_attn=disable_middle_self_attn, use_linear=use_linear_in_transformer,
-                use_checkpoint=use_checkpoint
+                use_checkpoint=use_checkpoint, use_simple_tf_block=True   # tắt 1 lần attn với cond là text
             ),
             ResBlock(
                 ch,
@@ -315,54 +311,53 @@ class ControlNet(nn.Module):
     def make_zero_conv(self, channels):
         return TimestepEmbedSequential(zero_module(conv_nd(self.dims, channels, channels, 1, padding=0)))
 
-    def embed_pose_into_ref(self, ref1, ref2, ref1_pose, ref2_pose):   
-        pose1_embedded = self.pose_emb(ref1_pose)  # B, 64
-        pose2_embedded = self.pose_emb(ref2_pose)  # B, 64
-
-        pose1_gamma_hf, pose1_beta_hf = self.hf_head(pose1_embedded)
-        pose2_gamma_hf, pose2_beta_hf = self.hf_head(pose2_embedded)
-
-        pose1_gamma_hf, pose1_beta_hf = pose1_gamma_hf.unsqueeze(1), pose1_beta_hf.unsqueeze(1)    # B, 1, 768
-        pose2_gamma_hf, pose2_beta_hf = pose2_gamma_hf.unsqueeze(1), pose2_beta_hf.unsqueeze(1)    # B, 1, 768
-
-        # --- ref_hf: VAE latent, spatial detail ---
-        ref1_lat_seq = ref1.flatten(2).transpose(1, 2)  # B, 4096, 4           1 ảnh ref hay control hay gt đều là B, 4, 64, 64
-        ref2_lat_seq = ref2.flatten(2).transpose(1, 2)  # B, 4096, 4
-
-        ref1_lat_seq = self.ref_latent_proj(ref1_lat_seq)  # B, 4096, 768
-        ref2_lat_seq = self.ref_latent_proj(ref2_lat_seq)  # B, 4096, 768
-
-        ref1_hf = ref1_lat_seq * (1 + pose1_gamma_hf) + pose1_beta_hf  # B, 4096, 768
-        ref2_hf = ref2_lat_seq * (1 + pose2_gamma_hf) + pose2_beta_hf  # B, 4096, 768
-
-        ref_hf = torch.cat([ref1_hf, ref2_hf], dim=1)  # B, 8192, 768
-
-        return ref_hf
-    
-
-    def forward(self, x, hint, timesteps, ref1, ref2, ref1_pose, ref2_pose, context, **kwargs):
+    def forward(self, x, hint, timesteps, ref1, ref2, ref1_pose, ref2_pose, context=None, **kwargs):
         t_emb = timestep_embedding(timesteps, self.model_channels, repeat_only=False)
-        emb = self.time_embed(t_emb)
-        
-        context_hf = self.embed_pose_into_ref(ref1[0], ref2[0], ref1_pose[0], ref2_pose[0])
+        art_emb = self.time_embed(t_emb)  # B, 1280
+        batch_size = art_emb.shape[0]
+        ref_emb = self.ref_time_emb.expand(batch_size, -1)  # B, 1280
 
-        guided_hint = self.input_hint_block(hint, emb, context)   ## B,4,64,64 -> B,320,64,64   đưa lên 320 để match với h += guided_hint
-        guided_hint = self.art_ref_trans_block(guided_hint, context_hf)
+        # [artifact, ref1, ref2]
+        emb = torch.cat(
+            [art_emb, ref_emb, ref_emb],
+            dim=0,
+        )  # 3B, 1280
+
+        art_ref_cat = torch.cat([hint, ref1, ref2], dim=0)       # 3B,4,64,64
+        art_ref_cat = self.input_art_ref_block(art_ref_cat, emb) # 3B,320,64,64
 
         outs = []
 
-        h = x.type(self.dtype)
-        for module, zero_conv in zip(self.input_blocks, self.zero_convs):
-            if guided_hint is not None:
-                h = module(h, emb, context)      # context hiện giờ là text empty 
-                h += guided_hint
-                guided_hint = None
-            else:
-                h = module(h, emb, context)
-            outs.append(zero_conv(h, emb, context))
+        h = x.type(self.dtype)   # B,4,64,64   THIS IS X_T !!!
 
-        h = self.middle_block(h, emb, context)
-        outs.append(self.middle_block_out(h, emb, context))
+        fuse_block_idx=0
+        # count from 0 to 11, 12 is middle block, 0 is input block
+        for idx, (module, zero_conv) in enumerate(zip(self.input_blocks, self.zero_convs)):
+            if art_ref_cat is not None:
+                h = module(h, emb)    # B,320,64,64    x_t đi vào input_blocks[0] để nâng chiều
+                h = torch.cat(
+                    [
+                        h,
+                        torch.zeros_like(h),
+                        torch.zeros_like(h)
+                    ],
+                    dim=0
+                )      # 3B,4,64,64   not allow adding between ref and x_t
+                h += art_ref_cat
+                art_ref_cat = None
+            else:
+                h = module(h, emb)
+                
+            if idx in FUSE_IDX:
+                art, ref1, ref2 = torch.chunk(h, 3, dim=0)
+                fused = self.fuse_blocks[fuse_block_idx](art, ref1, ref2, ref1_pose, ref2_pose)
+                outs.append(zero_conv(fused, emb[:art.shape[0]]))
+                fuse_block_idx += 1
+
+        h = self.middle_block(h, emb)
+        art, ref1, ref2 = torch.chunk(h, 3, dim=0)
+        fused = self.fuse_blocks[-1](art, ref1, ref2, ref1_pose, ref2_pose)
+        outs.append(self.middle_block_out(fused, emb[:art.shape[0]]))
 
         return outs
 
@@ -598,11 +593,9 @@ class ControlLDM(LatentDiffusion):
         lr_unet = self.learning_rate_for_unet_out       # SD UNet output blocks
 
         new_module_names = {
-            "ref_latent_proj",
-            "pose_emb",
-            "hf_head",
-            "art_ref_trans_block",
-            "input_hint_block",
+            "input_art_ref_block",
+            "fuse_blocks",
+            "ref_time_emb",
         }
 
         base_params = []
