@@ -33,7 +33,7 @@ class ImageLogger(Callback):
 
     @rank_zero_only
     def log_local(self, save_dir, split, images, global_step, current_epoch, batch_idx, use_artifact_decode):
-        sampler_name = "t300" if use_artifact_decode else "full"
+        sampler_name = "art" if use_artifact_decode else "full"
         root = os.path.join(save_dir, "image_log", split, f"step_{global_step:06}_{sampler_name}")
         for k in images:
             if k == "scene_name":

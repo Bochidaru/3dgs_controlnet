@@ -34,7 +34,7 @@ pretrain_path = './models/control_sd15_ini.ckpt'
 pl.seed_everything(42, workers=True)
 use_cache_latent = True
 learning_rate = 1e-5
-learning_rate_for_new_module = 2e-5
+learning_rate_for_new_module = 5e-5
 learning_rate_for_unet_out = 2e-6
 sd_locked = False
 only_mid_control = False
@@ -51,7 +51,7 @@ lr_override_values = {
 
 accumulate_grad_batches = 1
 # DataLoader Config
-batch_size = 112
+batch_size = 124
 num_workers = 8
 prefetch_factor = 4 if num_workers > 0 else None
 pin_memory = num_workers > 0
@@ -82,7 +82,7 @@ dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True,
 
 val_dataset = MyDataset(isTest=True, use_cached_latent=True)
 val_batches = []
-val_bs = 25
+val_bs = 16
 g = torch.Generator()
 g.manual_seed(42)
 val_dataloader = DataLoader(val_dataset, batch_size=val_bs, shuffle=True, generator=g)

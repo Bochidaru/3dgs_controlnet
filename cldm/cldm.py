@@ -517,21 +517,25 @@ class ControlLDM(LatentDiffusion):
             diffusion_grid = make_grid(diffusion_grid, nrow=diffusion_row.shape[0])
             log["diffusion_row"] = diffusion_grid
 
+        ts_list = [200, 300, 500]
         if sample:
             if use_artifact_decode:
-                samples, z_denoise_row = self.sample_log(cond={"c_concat": [c_cat], "c_crossattn": [c],
-                                                    "c_ref1": [c_ref1], "c_ref2": [c_ref2],
-                                                    "c_ref1_pose": [c_ref1_pose], "c_ref2_pose": [c_ref2_pose],},
-                                                batch_size=N, ddim=use_ddim,
-                                                ddim_steps=ddim_steps, eta=ddim_eta)        
+                for ts in ts_list:
+                    samples, z_denoise_row = self.sample_log(cond={"c_concat": [c_cat], "c_crossattn": [c],
+                                                        "c_ref1": [c_ref1], "c_ref2": [c_ref2],
+                                                        "c_ref1_pose": [c_ref1_pose], "c_ref2_pose": [c_ref2_pose],},
+                                                    batch_size=N, ddim=use_ddim, timestep=ts,
+                                                    ddim_steps=ddim_steps, eta=ddim_eta)
+                    x_samples = self.decode_first_stage(samples)
+                    log[f"samplesT{ts}"] = x_samples
             else:
                 samples, z_denoise_row = self.sample_log_full(cond={"c_concat": [c_cat], "c_crossattn": [c],
                                                             "c_ref1": [c_ref1], "c_ref2": [c_ref2],
                                                             "c_ref1_pose": [c_ref1_pose], "c_ref2_pose": [c_ref2_pose],},
                                                         batch_size=N, ddim=use_ddim,
                                                         ddim_steps=ddim_steps, eta=ddim_eta)
-            x_samples = self.decode_first_stage(samples)
-            log["samples"] = x_samples
+                x_samples = self.decode_first_stage(samples)
+                log["samples"] = x_samples
             if plot_denoise_rows:
                 denoise_grid = self._get_denoise_row_from_list(z_denoise_row)
                 log["denoise_row"] = denoise_grid
@@ -562,9 +566,9 @@ class ControlLDM(LatentDiffusion):
         return samples, intermediates
     
     @torch.no_grad()
-    def sample_log(self, cond, batch_size, ddim, ddim_steps, **kwargs):
+    def sample_log(self, cond, batch_size, ddim, ddim_steps, timestep, **kwargs):
         artifact_latent = cond["c_concat"][0]
-        ddpm_t = 300
+        ddpm_t = timestep
         ddim_sampler = DDIMSampler(self)
 
         ddim_sampler.make_schedule(
