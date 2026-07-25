@@ -3,6 +3,7 @@ import torch
 import torch as th
 import torch.nn as nn
 import numpy as np
+import lpips
 
 torch.set_float32_matmul_precision('high')
 
@@ -382,13 +383,20 @@ class ControlLDM(LatentDiffusion):
         self.only_mid_control = only_mid_control
         self.control_scales = [1.0] * 13
         self.register_buffer("empty_clip", torch.load("./cldm/empty_clip.pt"))
+        self.lpips_loss = lpips.LPIPS(net="vgg")
+        self.lpips_loss.requires_grad_(False)
+        self.lpips_weight = 0.02
 
     @torch.no_grad()
     def get_input(self, batch, k, bs=None, *args, **kwargs):
         ref1_pose = batch["ref1_pose"].to(self.device)  # B, 9
         ref2_pose = batch["ref2_pose"].to(self.device)  # B, 9
+        target    = batch["groundtruth"].to(self.device) # B, 512, 512, 3
+        target = einops.rearrange(target, 'b h w c -> b c h w').to(self.device)   # B, 3, 512, 512
+        target = target.to(memory_format=torch.contiguous_format).float()  
 
         if bs is not None:
+            target    = target[:bs]
             ref1_pose = ref1_pose[:bs]
             ref2_pose = ref2_pose[:bs]
 
@@ -448,7 +456,8 @@ class ControlLDM(LatentDiffusion):
 
         return x, dict(c_crossattn = [c], c_concat    = [z_control],
                     c_ref1      = [z_ref1], c_ref2      = [z_ref2],
-                    c_ref1_pose = [ref1_pose], c_ref2_pose = [ref2_pose],)
+                    c_ref1_pose = [ref1_pose], c_ref2_pose = [ref2_pose],
+                    rgb_x = [target])
 
     def apply_model(self, x_noisy, t, cond, *args, **kwargs):
         assert isinstance(cond, dict)
@@ -492,6 +501,7 @@ class ControlLDM(LatentDiffusion):
         c_ref2 = c_orig["c_ref2"][0][:N]
         c_ref1_pose = c_orig["c_ref1_pose"][0][:N]
         c_ref2_pose = c_orig["c_ref2_pose"][0][:N]
+
         
         N = min(z.shape[0], N)
         n_row = min(z.shape[0], n_row)

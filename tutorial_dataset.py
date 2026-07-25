@@ -153,21 +153,25 @@ class MyDataset(Dataset):
             ref2_path = os.path.join(trained_folder_path, ref2_name)
 
             source = cv2.cvtColor(cv2.imread(source_path), cv2.COLOR_BGR2RGB)
-            target = cv2.cvtColor(cv2.imread(target_path), cv2.COLOR_BGR2RGB)
+            # target = cv2.cvtColor(cv2.imread(target_path), cv2.COLOR_BGR2RGB)
             ref1   = cv2.cvtColor(cv2.imread(ref1_path),   cv2.COLOR_BGR2RGB)
             ref2   = cv2.cvtColor(cv2.imread(ref2_path),   cv2.COLOR_BGR2RGB)
 
             source, source_pad_info = resize_and_pad_to_square(source, self.target_size)
-            target, _               = resize_and_pad_to_square(target, self.target_size)
+            # target, _               = resize_and_pad_to_square(target, self.target_size)
             ref1,   _               = resize_and_pad_to_square(ref1,   self.target_size)
             ref2,   _               = resize_and_pad_to_square(ref2,   self.target_size)
 
             result["use_cache"]   = False
-            result["groundtruth"] = (target.astype(np.float32) / 127.5) - 1.0   # [-1, 1]
+            # result["groundtruth"] = (target.astype(np.float32) / 127.5) - 1.0   # [-1, 1]
             result["artifact"]    = (source.astype(np.float32) / 127.5) - 1.0
             result["ref1"]        = (ref1.astype(np.float32) / 127.5) - 1.0
             result["ref2"]        = (ref2.astype(np.float32) / 127.5) - 1.0
             result["pad_info"]    = source_pad_info
+
+        target = cv2.cvtColor(cv2.imread(target_path), cv2.COLOR_BGR2RGB)
+        target, _ = resize_and_pad_to_square(target, self.target_size)
+        result["groundtruth"] = (target.astype(np.float32) / 127.5) - 1.0
 
         return result
 

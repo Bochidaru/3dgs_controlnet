@@ -929,6 +929,14 @@ class LatentDiffusion(DDPM):
 
     #     return loss, loss_dict
 
+    def decode_first_stage_for_loss(self, z):
+        z = 1. / self.scale_factor * z
+
+        if hasattr(self.first_stage_model, "decode"):
+            return self.first_stage_model.decode(z)
+
+        return self.first_stage_model(z)
+
     def p_losses(self, x_start, cond, t, noise=None):
         artifact = cond["c_concat"][0]
         noise = default(noise, lambda: torch.randn_like(artifact))
@@ -943,24 +951,41 @@ class LatentDiffusion(DDPM):
         sqrt_one_minus = extract_into_tensor(self.sqrt_one_minus_alphas_cumprod, t, artifact.shape)
 
         eps_toward_target = (x_noisy - sqrt_alpha * x_start) / sqrt_one_minus
-
-        # Per-sample loss, chưa mean
-        loss_eps_per_sample = self.get_loss(pred_eps, eps_toward_target, mean=False).mean([1, 2, 3])  # [B]
+        loss_eps_per_sample = self.get_loss(pred_eps, eps_toward_target, mean=False).mean([1, 2, 3])
 
         pred_x0 = self.predict_start_from_noise(x_noisy, t, pred_eps)
-        loss_x0_per_sample = F.l1_loss(pred_x0, x_start, reduction="none").mean([1, 2, 3])  # [B]
+        loss_x0_per_sample = F.l1_loss(pred_x0, x_start, reduction="none").mean([1, 2, 3])
 
-        # Per-sample weight, normalize đúng [0,1]
         tau = t.float() / (self.num_timesteps - 1)
-        w = torch.sigmoid(10 * (tau - 0.5))     # [B]
+        w = torch.sigmoid(10 * (tau - 0.5))
 
-        loss_per_sample = w * loss_eps_per_sample + (1.0 - w) * loss_x0_per_sample  # [B]
+        loss_lpips_per_sample = torch.zeros_like(loss_x0_per_sample)
+        lpips_mask = t < 300
+
+        if lpips_mask.any():
+            idx = torch.where(lpips_mask)[0][:32]
+            pred_rgb = self.decode_first_stage_for_loss(pred_x0[idx])
+            gt_rgb = cond["rgb_x"][0][idx].to(pred_rgb.dtype)
+            lpips_val = self.lpips_loss(pred_rgb, gt_rgb).reshape(len(idx))
+            loss_lpips_per_sample[idx] = lpips_val
+
+        loss_x0_total_per_sample = (
+            loss_x0_per_sample
+            + 0.05 * loss_lpips_per_sample
+        )
+
+        loss_per_sample = (
+            w * loss_eps_per_sample
+            + (1.0 - w) * loss_x0_total_per_sample
+        )
+
         loss = loss_per_sample.mean()
 
-        loss_dict[f'{prefix}/loss_eps_target'] = loss_eps_per_sample.mean()
-        loss_dict[f'{prefix}/loss_x0'] = loss_x0_per_sample.mean()
-        loss_dict[f'{prefix}/weight_mean'] = w.mean()
-        loss_dict[f'{prefix}/loss'] = loss
+        loss_dict[f"{prefix}/loss_eps_target"] = loss_eps_per_sample.mean()
+        loss_dict[f"{prefix}/loss_x0"] = loss_x0_per_sample.mean()
+        loss_dict[f"{prefix}/loss_lpips"] = loss_lpips_per_sample.mean()
+        loss_dict[f"{prefix}/weight_mean"] = w.mean()
+        loss_dict[f"{prefix}/loss"] = loss
 
         return loss, loss_dict
 
