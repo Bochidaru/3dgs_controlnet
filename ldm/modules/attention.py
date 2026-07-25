@@ -356,7 +356,12 @@ class SimplerTransformerBlock(nn.Module):
         self.checkpoint = checkpoint
 
     def forward(self, x, context=None):
-        return checkpoint(self._forward, (x, context), self.parameters(), self.checkpoint)
+        if self.disable_self_attn:
+            if context is None:
+                raise ValueError(
+                    "context is required when disable_self_attn=True"
+                )
+        return checkpoint(self._forward, (x, ), self.parameters(), self.checkpoint)
 
     def _forward(self, x, context=None):
         x = self.attn1(self.norm1(x), context=context if self.disable_self_attn else None) + x

@@ -20,12 +20,11 @@ from ldm.modules.diffusionmodules.openaimodel import UNetModel, TimestepEmbedSeq
 from ldm.models.diffusion.ddpm import LatentDiffusion, disabled_train
 from ldm.util import log_txt_as_img, exists, instantiate_from_config
 from ldm.models.diffusion.ddim import DDIMSampler
-from cldm.film_head import FiLMHead
-from cldm.fuseblock import FuseBlock
+from cldm.fuseblock import FuseBlock, TinyFuseBlock
 
 
-FUSE_IDX = [ 2, 5, 8, 11 ]  # start from 0 to 12 (12 is middleblock), middle block is always being added to unet diff
-                                    # 2: 64; 5: 32; 8: 16; 11: 8; middle: 8 
+# FUSE_IDX = [ 2, 5, 8, 11 ]  # start from 0 to 12 (12 is middleblock), middle block is always being added to unet diff
+#                                     # 2: 64; 5: 32; 8: 16; 11: 8; middle: 8 
 
 
 class ControlledUnetModel(UNetModel):
@@ -45,7 +44,7 @@ class ControlledUnetModel(UNetModel):
             h += control.pop()
         idx = 11
         for i, module in enumerate(self.output_blocks):
-            if only_mid_control or control is None or idx not in FUSE_IDX:
+            if only_mid_control or control is None:
                 h = torch.cat([h, hs.pop()], dim=1)
             else:
                 h = torch.cat([h, hs.pop() + control.pop()], dim=1)
@@ -183,12 +182,25 @@ class ControlNet(nn.Module):
             zero_module(conv_nd(dims, in_channels, model_channels, 3, padding=1)),
         )
         self.fuse_blocks = nn.ModuleList([
-                            FuseBlock(320),
-                            FuseBlock(640),
-                            FuseBlock(1280),
-                            FuseBlock(1280),
-                            FuseBlock(1280),
-                        ])
+            TinyFuseBlock(320),   # 0
+
+            TinyFuseBlock(320),   # 1
+            TinyFuseBlock(320),   # 2
+            TinyFuseBlock(320),   # 3
+
+            TinyFuseBlock(640),   # 4
+            TinyFuseBlock(640),   # 5
+            TinyFuseBlock(640),   # 6
+
+            TinyFuseBlock(1280),  # 7
+            TinyFuseBlock(1280),  # 8
+            TinyFuseBlock(1280),  # 9
+
+            TinyFuseBlock(1280),  # 10
+            TinyFuseBlock(1280),  # 11
+
+            TinyFuseBlock(1280),  # middle
+        ])
 
 
 
@@ -317,6 +329,8 @@ class ControlNet(nn.Module):
         batch_size = art_emb.shape[0]
         ref_emb = self.ref_time_emb.expand(batch_size, -1)  # B, 1280
 
+        ref1, ref2, ref1_pose, ref2_pose = ref1[0], ref2[0], ref1_pose[0], ref2_pose[0]
+
         # [artifact, ref1, ref2]
         emb = torch.cat(
             [art_emb, ref_emb, ref_emb],
@@ -330,7 +344,6 @@ class ControlNet(nn.Module):
 
         h = x.type(self.dtype)   # B,4,64,64   THIS IS X_T !!!
 
-        fuse_block_idx=0
         # count from 0 to 11, 12 is middle block, 0 is input block
         for idx, (module, zero_conv) in enumerate(zip(self.input_blocks, self.zero_convs)):
             if art_ref_cat is not None:
@@ -348,16 +361,14 @@ class ControlNet(nn.Module):
             else:
                 h = module(h, emb)
                 
-            if idx in FUSE_IDX:
-                art, ref1, ref2 = torch.chunk(h, 3, dim=0)
-                fused = self.fuse_blocks[fuse_block_idx](art, ref1, ref2, ref1_pose, ref2_pose)
-                outs.append(zero_conv(fused, emb[:art.shape[0]]))
-                fuse_block_idx += 1
+            art, ref1, ref2 = torch.chunk(h, 3, dim=0)
+            fused = self.fuse_blocks[idx](art, ref1, ref2, ref1_pose, ref2_pose)
+            outs.append(zero_conv(fused, emb[:batch_size]))
 
         h = self.middle_block(h, emb)
         art, ref1, ref2 = torch.chunk(h, 3, dim=0)
         fused = self.fuse_blocks[-1](art, ref1, ref2, ref1_pose, ref2_pose)
-        outs.append(self.middle_block_out(fused, emb[:art.shape[0]]))
+        outs.append(self.middle_block_out(fused, emb[:batch_size]))
 
         return outs
 
