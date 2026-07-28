@@ -6,6 +6,10 @@ import numpy as np
 from einops import rearrange
 from typing import Optional, Any
 
+from ldm.modules.diffusionmodules.util import (
+    checkpoint
+)
+
 from ldm.modules.attention import MemoryEfficientCrossAttention
 
 try:
@@ -126,7 +130,18 @@ class ResnetBlock(nn.Module):
                                                     stride=1,
                                                     padding=0)
 
-    def forward(self, x, temb):
+    def forward(self, x, temb, use_checkpoint=False):
+        if use_checkpoint and torch.is_grad_enabled():
+            return checkpoint(
+                func=lambda input_x: self._forward(input_x, None),
+                inputs=(x,),
+                params=(),
+                flag=True,
+            )
+
+        return self._forward(x, temb)
+
+    def _forward(self, x, temb):
         h = x
         h = self.norm1(h)
         h = nonlinearity(h)
@@ -147,6 +162,43 @@ class ResnetBlock(nn.Module):
                 x = self.nin_shortcut(x)
 
         return x+h
+
+
+class SDPAAttnBlock(nn.Module):
+    def __init__(self, in_channels):
+        super().__init__()
+        self.in_channels = in_channels
+
+        self.norm = Normalize(in_channels)
+        self.q = nn.Conv2d(in_channels, in_channels, 1)
+        self.k = nn.Conv2d(in_channels, in_channels, 1)
+        self.v = nn.Conv2d(in_channels, in_channels, 1)
+        self.proj_out = nn.Conv2d(in_channels, in_channels, 1)
+
+    def forward(self, x):
+        h_ = self.norm(x)
+        q = self.q(h_)
+        k = self.k(h_)
+        v = self.v(h_)
+
+        b, c, h, w = q.shape
+        # [B, C, H, W] -> [B, 1 head, H*W, C]
+        q = q.reshape(b, c, h * w).transpose(1, 2).unsqueeze(1)
+        k = k.reshape(b, c, h * w).transpose(1, 2).unsqueeze(1)
+        v = v.reshape(b, c, h * w).transpose(1, 2).unsqueeze(1)
+
+        h_ = torch.nn.functional.scaled_dot_product_attention(
+            q, k, v,
+            attn_mask=None,
+            dropout_p=0.0,
+            is_causal=False,
+        )
+
+        # [B, 1, H*W, C] -> [B, C, H, W]
+        h_ = h_.squeeze(1).transpose(1, 2).reshape(b, c, h, w)
+        h_ = self.proj_out(h_)
+
+        return x + h_
 
 
 class AttnBlock(nn.Module):
@@ -278,13 +330,15 @@ class MemoryEfficientCrossAttentionWrapper(MemoryEfficientCrossAttention):
 
 
 def make_attn(in_channels, attn_type="vanilla", attn_kwargs=None):
-    assert attn_type in ["vanilla", "vanilla-xformers", "memory-efficient-cross-attn", "linear", "none"], f'attn_type {attn_type} unknown'
+    assert attn_type in ["vanilla", "sdpa", "vanilla-xformers", "memory-efficient-cross-attn", "linear", "none",], f'attn_type {attn_type} unknown'
     if XFORMERS_IS_AVAILBLE and attn_type == "vanilla":
         attn_type = "vanilla-xformers"
     print(f"making attention of type '{attn_type}' with {in_channels} in_channels")
     if attn_type == "vanilla":
         assert attn_kwargs is None
         return AttnBlock(in_channels)
+    elif attn_type == "sdpa":
+        return SDPAAttnBlock(in_channels)
     elif attn_type == "vanilla-xformers":
         print(f"building MemoryEfficientAttnBlock with {in_channels} in_channels...")
         return MemoryEfficientAttnBlock(in_channels)
@@ -634,7 +688,7 @@ class Decoder(nn.Module):
         # upsampling
         for i_level in reversed(range(self.num_resolutions)):
             for i_block in range(self.num_res_blocks+1):
-                h = self.up[i_level].block[i_block](h, temb)
+                h = self.up[i_level].block[i_block](h, temb, True)     # only use checkpointing outside middle 
                 if len(self.up[i_level].attn) > 0:
                     h = self.up[i_level].attn[i_block](h)
             if i_level != 0:

@@ -965,13 +965,13 @@ class LatentDiffusion(DDPM):
         if lpips_mask.any():
             idx = torch.where(lpips_mask)[0][:32]
             pred_rgb = self.decode_first_stage_for_loss(pred_x0[idx])
-            gt_rgb = cond["rgb_x"][0][idx].to(pred_rgb.dtype)
+            gt_rgb = cond["rgb_x"][0][idx].to(pred_rgb.dtype).detach()
             lpips_val = self.lpips_loss(pred_rgb, gt_rgb).reshape(len(idx))
             loss_lpips_per_sample[idx] = lpips_val
 
         loss_x0_total_per_sample = (
             loss_x0_per_sample
-            + 0.05 * loss_lpips_per_sample
+            + self.lpips_weight * loss_lpips_per_sample
         )
 
         loss_per_sample = (

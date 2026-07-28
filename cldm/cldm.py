@@ -383,8 +383,13 @@ class ControlLDM(LatentDiffusion):
         self.only_mid_control = only_mid_control
         self.control_scales = [1.0] * 13
         self.register_buffer("empty_clip", torch.load("./cldm/empty_clip.pt"))
-        self.lpips_loss = lpips.LPIPS(net="vgg")
+        self.instantiate_lpips()
+
+    def instantiate_lpips(self):
+        self.lpips_loss = lpips.LPIPS(net="alex")
         self.lpips_loss.requires_grad_(False)
+        self.lpips_loss.eval()
+        self.lpips_loss.train = disabled_train
         self.lpips_weight = 0.02
 
     @torch.no_grad()

@@ -72,6 +72,7 @@ model:
           - 4
           num_res_blocks: 2
           attn_resolutions: []
+          attn_type: sdpa
           dropout: 0.0
         lossconfig:
           target: torch.nn.Identity
