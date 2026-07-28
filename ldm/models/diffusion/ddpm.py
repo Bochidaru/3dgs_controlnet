@@ -936,7 +936,7 @@ class LatentDiffusion(DDPM):
             return self.first_stage_model.decode(z)
 
         return self.first_stage_model(z)
-
+    
     def p_losses(self, x_start, cond, t, noise=None):
         artifact = cond["c_concat"][0]
         noise = default(noise, lambda: torch.randn_like(artifact))
@@ -945,45 +945,134 @@ class LatentDiffusion(DDPM):
         pred_eps = self.apply_model(x_noisy, t, cond)
 
         loss_dict = {}
-        prefix = 'train' if self.training else 'val'
+        prefix = "train" if self.training else "val"
 
-        sqrt_alpha = extract_into_tensor(self.sqrt_alphas_cumprod, t, artifact.shape)
-        sqrt_one_minus = extract_into_tensor(self.sqrt_one_minus_alphas_cumprod, t, artifact.shape)
+        sqrt_alpha = extract_into_tensor(
+            self.sqrt_alphas_cumprod, t, artifact.shape
+        )
+        sqrt_one_minus = extract_into_tensor(
+            self.sqrt_one_minus_alphas_cumprod, t, artifact.shape
+        )
 
-        eps_toward_target = (x_noisy - sqrt_alpha * x_start) / sqrt_one_minus
-        loss_eps_per_sample = self.get_loss(pred_eps, eps_toward_target, mean=False).mean([1, 2, 3])
+        eps_toward_target = (
+            x_noisy - sqrt_alpha * x_start
+        ) / sqrt_one_minus
+
+        loss_eps_per_sample = self.get_loss(
+            pred_eps, eps_toward_target, mean=False
+        ).mean([1, 2, 3])
 
         pred_x0 = self.predict_start_from_noise(x_noisy, t, pred_eps)
-        loss_x0_per_sample = F.l1_loss(pred_x0, x_start, reduction="none").mean([1, 2, 3])
+
+        loss_x0_per_sample = F.l1_loss(
+            pred_x0, x_start, reduction="none"
+        ).mean([1, 2, 3])
 
         tau = t.float() / (self.num_timesteps - 1)
         w = torch.sigmoid(10 * (tau - 0.5))
 
+        # Chỉ dùng cho log.
         loss_lpips_per_sample = torch.zeros_like(loss_x0_per_sample)
-        lpips_mask = t < 300
 
-        if lpips_mask.any():
-            idx = torch.where(lpips_mask)[0][:32]
-            pred_rgb = self.decode_first_stage_for_loss(pred_x0[idx])
-            gt_rgb = cond["rgb_x"][0][idx].to(pred_rgb.dtype).detach()
-            lpips_val = self.lpips_loss(pred_rgb, gt_rgb).reshape(len(idx))
-            loss_lpips_per_sample[idx] = lpips_val
+        # Tổng d(L_lpips) / d(pred_x0) từ từng chunk.
+        lpips_vjp = torch.zeros_like(pred_x0)
 
-        loss_x0_total_per_sample = (
-            loss_x0_per_sample
-            + self.lpips_weight * loss_lpips_per_sample
+        # Giá trị LPIPS thật, đã gồm lpips_weight và timestep weighting.
+        lpips_scalar = torch.zeros(
+            (),
+            device=pred_x0.device,
+            dtype=loss_x0_per_sample.dtype,
         )
 
-        loss_per_sample = (
+        max_lpips_samples = 32
+        lpips_chunk_size = 8
+
+        # VJP chỉ cần lúc train; validation thường chạy no_grad.
+        lpips_needs_grad = (
+            torch.is_grad_enabled()
+            and pred_x0.requires_grad
+        )
+
+        idx = torch.where(t < 300)[0][:max_lpips_samples]
+
+        if idx.numel() > 0:
+            for idx_chunk in idx.split(lpips_chunk_size):
+                # Decoder chỉ xử lý tối đa 4 ảnh tại một thời điểm.
+                pred_rgb = self.decode_first_stage_for_loss(
+                    pred_x0[idx_chunk]
+                )
+
+                gt_rgb = cond["rgb_x"][0][idx_chunk].to(
+                    pred_rgb.dtype
+                ).detach()
+
+                lpips_val = self.lpips_loss(pred_rgb, gt_rgb).flatten()
+                lpips_val = lpips_val.to(
+                    dtype=loss_x0_per_sample.dtype
+                )
+
+                # Mean trên subset LPIPS được chọn, không phải full batch.
+                chunk_lpips_loss = (
+                    self.lpips_weight
+                    * (1.0 - w[idx_chunk])
+                    * lpips_val
+                    / idx.numel()
+                ).sum()
+
+                if lpips_needs_grad:
+                    # Tính và giải phóng graph LPIPS + decoder của chunk này.
+                    grad_x0, = torch.autograd.grad(
+                        chunk_lpips_loss,
+                        pred_x0,
+                        retain_graph=False,
+                        create_graph=False,
+                    )
+                    lpips_vjp.add_(grad_x0)
+                    del grad_x0
+
+                # Chỉ giữ value để log/hiển thị loss.
+                lpips_scalar = lpips_scalar + chunk_lpips_loss.detach()
+                loss_lpips_per_sample[idx_chunk] = lpips_val.detach()
+
+                del pred_rgb, gt_rgb, lpips_val, chunk_lpips_loss
+
+        # Loss diffusion/L1 gốc.
+        loss_base = (
             w * loss_eps_per_sample
-            + (1.0 - w) * loss_x0_total_per_sample
-        )
+            + (1.0 - w) * loss_x0_per_sample
+        ).mean()
 
-        loss = loss_per_sample.mean()
+        if lpips_needs_grad:
+            # Forward value = 0; backward gradient tại pred_x0 = lpips_vjp.
+            lpips_surrogate = (
+                pred_x0 * lpips_vjp.detach()
+            ).sum()
+
+            # Forward value = loss_base + lpips_scalar.
+            # Backward = gradient loss_base + gradient LPIPS.
+            loss = (
+                loss_base
+                + lpips_scalar
+                + lpips_surrogate
+                - lpips_surrogate.detach()
+            )
+        else:
+            # Validation/no_grad: chỉ cần giá trị loss thật.
+            loss = loss_base + lpips_scalar
+
+        loss_lpips_mean = (
+            loss_lpips_per_sample[idx].mean()
+            if idx.numel() > 0
+            else torch.zeros(
+                (),
+                device=pred_x0.device,
+                dtype=loss_x0_per_sample.dtype,
+            )
+        )
 
         loss_dict[f"{prefix}/loss_eps_target"] = loss_eps_per_sample.mean()
         loss_dict[f"{prefix}/loss_x0"] = loss_x0_per_sample.mean()
-        loss_dict[f"{prefix}/loss_lpips"] = loss_lpips_per_sample.mean()
+        loss_dict[f"{prefix}/loss_lpips"] = loss_lpips_mean
         loss_dict[f"{prefix}/weight_mean"] = w.mean()
         loss_dict[f"{prefix}/loss"] = loss
 

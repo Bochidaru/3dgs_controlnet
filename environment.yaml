@@ -31,5 +31,6 @@ dependencies:
       - ipywidgets
       - hf_xet
       - gdown
+      - lpips
       - huggingface-hub[cli]
       - numpy==1.26.4

@@ -51,7 +51,7 @@ lr_override_values = {
 
 accumulate_grad_batches = 1
 # DataLoader Config
-batch_size = 124
+batch_size = 116
 num_workers = 8
 prefetch_factor = 4 if num_workers > 0 else None
 pin_memory = num_workers > 0

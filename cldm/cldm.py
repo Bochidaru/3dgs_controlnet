@@ -390,7 +390,7 @@ class ControlLDM(LatentDiffusion):
         self.lpips_loss.requires_grad_(False)
         self.lpips_loss.eval()
         self.lpips_loss.train = disabled_train
-        self.lpips_weight = 0.02
+        self.lpips_weight = 0.035
 
     @torch.no_grad()
     def get_input(self, batch, k, bs=None, *args, **kwargs):
@@ -532,7 +532,8 @@ class ControlLDM(LatentDiffusion):
             diffusion_grid = make_grid(diffusion_grid, nrow=diffusion_row.shape[0])
             log["diffusion_row"] = diffusion_grid
 
-        ts_list = [200, 300, 500]
+        # ts_list = [200, 300, 500]
+        ts_list = [300]
         if sample:
             if use_artifact_decode:
                 for ts in ts_list:
