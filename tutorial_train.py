@@ -14,18 +14,43 @@ warnings.filterwarnings("ignore", category=FutureWarning)
 
 
 class LROverrideCallback(pl.Callback):
-    def __init__(self, new_lr: dict):
-        self.new_lr = new_lr
+    def __init__(self, new_base_lrs: dict, after_step=1000):
+        self.new_base_lrs = new_base_lrs
+        self.after_step = after_step
+        self.applied = False
+
+    def _apply(self, trainer):
+        opt = trainer.optimizers[0]
+        scheduler = trainer.lr_scheduler_configs[0].scheduler
+
+        for i, group in enumerate(opt.param_groups):
+            name = group.get("name", "")
+            if name not in self.new_base_lrs:
+                continue
+
+            new_base_lr = self.new_base_lrs[name]
+
+            scheduler.base_lrs[i] = new_base_lr
+            group["initial_lr"] = new_base_lr
+
+            factor = scheduler.lr_lambdas[i](scheduler.last_epoch)
+            group["lr"] = new_base_lr * factor
+
+            print(
+                f"[LROverride] step={trainer.global_step}, "
+                f"{name}: base={new_base_lr:.2e}, "
+                f"current={group['lr']:.2e}"
+            )
+
+        self.applied = True
 
     def on_train_start(self, trainer, pl_module):
-        opt = trainer.optimizers[0]
-        for group in opt.param_groups:
-            name = group.get("name", "")
-            if name in self.new_lr:
-                old = group["lr"]
-                group["lr"]         = self.new_lr[name]
-                group["initial_lr"] = self.new_lr[name]
-                print(f"[LROverride] group '{name}': {old:.2e} → {self.new_lr[name]:.2e}")
+        if trainer.global_step >= self.after_step:
+            self._apply(trainer)
+
+    def on_before_optimizer_step(self, trainer, pl_module, optimizer):
+        if (not self.applied and trainer.global_step >= self.after_step):
+            self._apply(trainer)
 
 
 # Configs

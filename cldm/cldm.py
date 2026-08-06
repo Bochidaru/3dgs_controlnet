@@ -386,7 +386,7 @@ class ControlLDM(LatentDiffusion):
         self.instantiate_lpips()
 
     def instantiate_lpips(self):
-        self.lpips_loss = lpips.LPIPS(net="alex")
+        self.lpips_loss = lpips.LPIPS(net="vgg")
         self.lpips_loss.requires_grad_(False)
         self.lpips_loss.eval()
         self.lpips_loss.train = disabled_train
