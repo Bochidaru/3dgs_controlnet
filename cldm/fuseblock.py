@@ -68,35 +68,30 @@ class TinyFuseBlock(nn.Module):
             nn.Linear(pose_hidden_dim, channels * 2),
         )
 
+        # Bắt đầu từ phép biến đổi identity:
+        # scale = 0 và shift = 0.
+        nn.init.zeros_(self.pose_encoder[-1].weight)
+        nn.init.zeros_(self.pose_encoder[-1].bias)
+
         self.fuse = nn.Sequential(
-            nn.Conv2d(channels * 3, channels, 1),
+            nn.Conv2d(channels * 3, channels, kernel_size=1),
             nn.SiLU(),
         )
 
     def condition_ref(self, ref, pose):
         pose_feat = self.pose_encoder(pose)
-
         scale, shift = torch.chunk(pose_feat, 2, dim=-1)
 
         scale = scale[:, :, None, None]
         shift = shift[:, :, None, None]
 
-        return ref * (1.0 + 0.1 * torch.tanh(scale)) + 0.1 * shift
+        return ref * (1.0 + scale) + shift
 
     def forward(self, art, ref1, ref2, ref1_pose=None, ref2_pose=None):
-        if ref1_pose is not None and ref2_pose is not None:
+        if ref1_pose is not None:
             ref1 = self.condition_ref(ref1, ref1_pose)
+
+        if ref2_pose is not None:
             ref2 = self.condition_ref(ref2, ref2_pose)
 
-        fused = self.fuse(
-            torch.cat(
-                [
-                    art,
-                    ref1,
-                    ref2,
-                ],
-                dim=1,
-            )
-        )
-
-        return fused
+        return self.fuse(torch.cat([art, ref1, ref2], dim=1))

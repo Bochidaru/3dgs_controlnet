@@ -9,8 +9,9 @@ from tqdm import tqdm
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, PROJECT_ROOT)
+os.chdir(PROJECT_ROOT)
 
-import share  # áp dụng các thiết lập runtime của project
+import share
 from cldm.model import create_model, load_state_dict
 from inference_dataset import InferDataset
 
@@ -30,25 +31,45 @@ TARGET_SIZE = (512, 512)
 
 
 def encode_condition(model, batch, device):
-    artifact = batch["artifact"].permute(0, 3, 1, 2).contiguous().to(device)
-    ref1 = batch["ref1"].permute(0, 3, 1, 2).contiguous().to(device)
-    ref2 = batch["ref2"].permute(0, 3, 1, 2).contiguous().to(device)
+    artifact = (
+        batch["artifact"]
+        .permute(0, 3, 1, 2)
+        .contiguous()
+        .to(device, non_blocking=True)
+    )
+    ref1 = (
+        batch["ref1"]
+        .permute(0, 3, 1, 2)
+        .contiguous()
+        .to(device, non_blocking=True)
+    )
+    ref2 = (
+        batch["ref2"]
+        .permute(0, 3, 1, 2)
+        .contiguous()
+        .to(device, non_blocking=True)
+    )
 
-    # Encode chung để giảm số lần gọi VAE encoder.
+    # Encode ba loại ảnh trong một lần gọi VAE encoder.
     images = torch.cat([artifact, ref1, ref2], dim=0)
     latents = model.get_first_stage_encoding(
         model.encode_first_stage(images)
     ).detach()
-    z_artifact, z_ref1, z_ref2 = latents.chunk(3, dim=0)
 
+    z_artifact, z_ref1, z_ref2 = latents.chunk(3, dim=0)
     batch_size = z_artifact.shape[0]
+
     condition = {
         "c_concat": [z_artifact],
         "c_crossattn": [model.get_empty_clip(batch_size)],
         "c_ref1": [z_ref1],
         "c_ref2": [z_ref2],
-        "c_ref1_pose": [batch["ref1_pose"].to(device)],
-        "c_ref2_pose": [batch["ref2_pose"].to(device)],
+        "c_ref1_pose": [
+            batch["ref1_pose"].to(device, non_blocking=True)
+        ],
+        "c_ref2_pose": [
+            batch["ref2_pose"].to(device, non_blocking=True)
+        ],
     }
     return condition
 
@@ -60,15 +81,47 @@ def to_uint8_rgb(image):
 
 
 def remove_padding(image, pad_info):
-    top, bottom, left, right = [int(v) for v in pad_info]
+    top, bottom, left, right = [int(value) for value in pad_info]
     height, width = image.shape[:2]
+
     return image[
         top:height - bottom if bottom > 0 else height,
         left:width - right if right > 0 else width,
     ]
 
 
+def get_pad_infos(batch):
+    """Đưa pad_info do DataLoader tạo về shape [B, 4]."""
+    pad_info = batch["pad_info"]
+    if isinstance(pad_info, (list, tuple)):
+        return torch.stack(pad_info, dim=1)
+    return pad_info
+
+
+def get_scene_id(scene_name):
+    """Lấy `dataset/scene_tag` từ tên đầy đủ của sample."""
+    parts = scene_name.replace("\\", "/").split("/")
+    if len(parts) < 3:
+        raise ValueError(f"Invalid scene_name: {scene_name}")
+    return "/".join(parts[:2])
+
+
+def get_sample_name(scene_name):
+    """Lấy phần tên sample nằm sau `dataset/scene_tag/`."""
+    parts = scene_name.replace("\\", "/").split("/")
+    if len(parts) < 3:
+        raise ValueError(f"Invalid scene_name: {scene_name}")
+
+    sample_name = "/".join(parts[2:])
+
+    # Ký tự * không hợp lệ trong tên file trên Windows.
+    return sample_name.replace("*", "_")
+
+
 def main():
+    if not torch.cuda.is_available():
+        raise RuntimeError("CUDA is required for inference.")
+
     device = torch.device("cuda")
     os.makedirs(OUTPUT_DIR, exist_ok=True)
 
@@ -86,9 +139,11 @@ def main():
     )
 
     model = create_model(CONFIG_PATH).cpu()
-    model.load_state_dict(load_state_dict(CHECKPOINT_PATH, location="cpu"))
+    model.load_state_dict(
+        load_state_dict(CHECKPOINT_PATH, location="cpu")
+    )
 
-    # LPIPS chỉ phục vụ training loss, không dùng khi inference.
+    # Hai module này không tham gia vào đường inference hiện tại.
     if hasattr(model, "lpips_loss"):
         model.lpips_loss = None
     if hasattr(model, "cond_stage_model"):
@@ -97,7 +152,7 @@ def main():
     model.requires_grad_(False).eval().to(device)
 
     with torch.inference_mode():
-        for batch in tqdm(dataloader):
+        for batch in tqdm(dataloader, desc="Inference"):
             with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
                 condition = encode_condition(model, batch, device)
 
@@ -110,19 +165,35 @@ def main():
                 )
                 predictions = model.decode_first_stage(samples)
 
+            pad_infos = get_pad_infos(batch)
+
             for prediction, pad_info, scene_name in zip(
-                predictions, batch["pad_info"], batch["scene_name"]
+                predictions,
+                pad_infos,
+                batch["scene_name"],
             ):
                 prediction = remove_padding(
-                    to_uint8_rgb(prediction), pad_info.tolist()
+                    to_uint8_rgb(prediction),
+                    pad_info.tolist(),
                 )
 
-                output_path = os.path.join(OUTPUT_DIR, scene_name + ".png")
-                os.makedirs(os.path.dirname(output_path), exist_ok=True)
-                cv2.imwrite(
+                scene_id = get_scene_id(scene_name)
+                sample_name = get_sample_name(scene_name)
+
+                scene_output_dir = os.path.join(OUTPUT_DIR, scene_id)
+                os.makedirs(scene_output_dir, exist_ok=True)
+
+                output_path = os.path.join(
+                    scene_output_dir,
+                    sample_name + ".png",
+                )
+
+                success = cv2.imwrite(
                     output_path,
                     cv2.cvtColor(prediction, cv2.COLOR_RGB2BGR),
                 )
+                if not success:
+                    raise IOError(f"Failed to save image: {output_path}")
 
 
 if __name__ == "__main__":

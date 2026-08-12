@@ -43,14 +43,13 @@ class ControlledUnetModel(UNetModel):
 
         if control is not None:
             h += control.pop()
-        idx = 11
+
         for i, module in enumerate(self.output_blocks):
             if only_mid_control or control is None:
                 h = torch.cat([h, hs.pop()], dim=1)
             else:
                 h = torch.cat([h, hs.pop() + control.pop()], dim=1)
             h = module(h, emb, context)
-            idx -= 1
 
         h = h.type(x.dtype)
         return self.out(h)
@@ -390,7 +389,9 @@ class ControlLDM(LatentDiffusion):
         self.lpips_loss.requires_grad_(False)
         self.lpips_loss.eval()
         self.lpips_loss.train = disabled_train
-        self.lpips_weight = 0.035
+        self.lpips_weight = 0.5
+        self.rgb_recon_weight = 0.5
+        self.rgb_recon_loss_type = "l1"
 
     @torch.no_grad()
     def get_input(self, batch, k, bs=None, *args, **kwargs):
