@@ -58,9 +58,9 @@ resume_ckpt_path = ""                             ## For example: "./models/weig
 pretrain_path = './models/control_sd15_ini.ckpt'
 pl.seed_everything(42, workers=True)
 use_cache_latent = True
-learning_rate = 1e-5
-learning_rate_for_new_module = 5e-5
-learning_rate_for_unet_out = 2e-6
+learning_rate = 2e-5
+learning_rate_for_new_module = 1e-4
+learning_rate_for_unet_out = 4e-6
 sd_locked = False
 only_mid_control = False
 num_val_batches = 1
@@ -76,7 +76,7 @@ lr_override_values = {
 
 accumulate_grad_batches = 1
 # DataLoader Config
-batch_size = 116
+batch_size = 128
 num_workers = 8
 prefetch_factor = 4 if num_workers > 0 else None
 pin_memory = num_workers > 0
